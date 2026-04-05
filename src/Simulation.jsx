@@ -3,6 +3,7 @@ import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
+import * as Tone from 'tone';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // YELLOWSTONE TROPHIC CASCADE — IMMERSIVE ECOSYSTEM SIMULATOR
@@ -127,6 +128,7 @@ function updateWolf(w, eco) {
         prey.alive = false; prey.state = "dead";
         w.energy = Math.min(w.maxEnergy, w.energy + 60);
         w.huntCooldown = 120; w.state = "wander";
+        eco.particles.push({ type: "kill", x: prey.x, y: prey.y, color: "#ef4444", icon: "💀", age: 0, maxAge: 90 });
       }
       return;
     }
@@ -141,7 +143,7 @@ function updateWolf(w, eco) {
   wander(w, eco.W, eco.H);
   if (w.energy > 120 && Math.random() < 0.003) {
     const cnt = eco.entities.filter(e => e.type === WOLF && e.alive).length;
-    if (cnt < 45) { eco.entities.push(createEntity(WOLF, w.x + rand(-20, 20), w.y + rand(-20, 20), eco.W, eco.H)); w.energy -= 40; }
+    if (cnt < 45) { eco.entities.push(createEntity(WOLF, w.x + rand(-20, 20), w.y + rand(-20, 20), eco.W, eco.H)); w.energy -= 40; eco.particles.push({ type: "birth", x: w.x, y: w.y, color: "#94a3b8", icon: "🐺", age: 0, maxAge: 80 }); }
   }
 }
 
@@ -164,6 +166,7 @@ function updateElk(elk, eco) {
         tree.growth -= 0.012; tree.health -= 0.35;
         elk.energy = Math.min(elk.maxEnergy, elk.energy + 2);
         elk.grazeTimer = 10; eco.vegetationHealth -= 0.012;
+        if (Math.random() < 0.08) eco.particles.push({ type: "growth", x: tree.x, y: tree.y - 10, color: "#854d0e", icon: "🍂", age: 20, maxAge: 70 });
       }
       return;
     }
@@ -172,7 +175,7 @@ function updateElk(elk, eco) {
   wander(elk, eco.W, eco.H);
   if (elk.energy > 90 && Math.random() < 0.005) {
     const cnt = eco.entities.filter(e => e.type === ELK && e.alive).length;
-    if (cnt < 130) { eco.entities.push(createEntity(ELK, elk.x + rand(-20, 20), elk.y + rand(-20, 20), eco.W, eco.H)); elk.energy -= 30; }
+    if (cnt < 130) { eco.entities.push(createEntity(ELK, elk.x + rand(-20, 20), elk.y + rand(-20, 20), eco.W, eco.H)); elk.energy -= 30; eco.particles.push({ type: "birth", x: elk.x, y: elk.y, color: "#a78bfa", icon: "🦌", age: 0, maxAge: 80 }); }
   }
 }
 
@@ -183,7 +186,7 @@ function updateTree(tree, eco) {
   tree.health = clamp(tree.health + 0.02, 0, 100);
   if (tree.growth > 0.8 && Math.random() < 0.001 * vf) {
     const cnt = eco.entities.filter(e => e.type === TREE && e.alive).length;
-    if (cnt < 150) eco.entities.push(createEntity(TREE, tree.x + rand(-50, 50), tree.y + rand(-50, 50), eco.W, eco.H));
+    if (cnt < 150) { eco.entities.push(createEntity(TREE, tree.x + rand(-50, 50), tree.y + rand(-50, 50), eco.W, eco.H)); eco.particles.push({ type: "growth", x: tree.x, y: tree.y, color: "#22c55e", icon: "🌱", age: 0, maxAge: 100 }); }
   }
 }
 
@@ -197,7 +200,7 @@ function updateBeaver(b, eco) {
   if (b.energy > 70 && Math.random() < 0.002) {
     const tc = eco.entities.filter(e => e.type === TREE && e.alive && e.growth > 0.4).length;
     const bc = eco.entities.filter(e => e.type === BEAVER && e.alive).length;
-    if (tc > 20 && bc < 22) { eco.entities.push(createEntity(BEAVER, b.x + rand(-15, 15), b.y + rand(-15, 15), eco.W, eco.H)); b.energy -= 25; }
+    if (tc > 20 && bc < 22) { eco.entities.push(createEntity(BEAVER, b.x + rand(-15, 15), b.y + rand(-15, 15), eco.W, eco.H)); b.energy -= 25; eco.particles.push({ type: "birth", x: b.x, y: b.y, color: "#fb923c", icon: "🦫", age: 0, maxAge: 80 }); }
   }
 }
 
@@ -227,7 +230,7 @@ function updateCoyote(c, eco) {
   if (c.energy > 70 && Math.random() < rr) {
     const cnt = eco.entities.filter(e => e.type === COYOTE && e.alive).length;
     const cap = wc < 3 ? 40 : 16;
-    if (cnt < cap) { eco.entities.push(createEntity(COYOTE, c.x + rand(-20, 20), c.y + rand(-20, 20), eco.W, eco.H)); c.energy -= 25; }
+    if (cnt < cap) { eco.entities.push(createEntity(COYOTE, c.x + rand(-20, 20), c.y + rand(-20, 20), eco.W, eco.H)); c.energy -= 25; eco.particles.push({ type: "birth", x: c.x, y: c.y, color: "#d97706", icon: "🐾", age: 0, maxAge: 80 }); }
   }
 }
 
@@ -239,7 +242,7 @@ function updateFish(f, eco) {
   f.y = clamp(f.y + rand(-1.8, 1.8), 5, eco.H - 5);
   if (eco.riverHealth > 50 && Math.random() < 0.003) {
     const cnt = eco.entities.filter(e => e.type === FISH && e.alive).length;
-    if (cnt < 40) eco.entities.push(createEntity(FISH, f.x, f.y + rand(-10, 10), eco.W, eco.H));
+    if (cnt < 40) { eco.entities.push(createEntity(FISH, f.x, f.y + rand(-10, 10), eco.W, eco.H)); eco.particles.push({ type: "birth", x: f.x, y: f.y, color: "#67e8f9", icon: "🐟", age: 0, maxAge: 60 }); }
   }
 }
 
@@ -254,7 +257,7 @@ function updateBird(b, eco) {
   const tc = eco.entities.filter(e => e.type === TREE && e.alive && e.growth > 0.5).length;
   if (b.energy > 40 && tc > 20 && Math.random() < 0.002) {
     const cnt = eco.entities.filter(e => e.type === BIRD && e.alive).length;
-    if (cnt < 35) { eco.entities.push(createEntity(BIRD, b.x + rand(-20, 20), b.y + rand(-20, 20), eco.W, eco.H)); b.energy -= 15; }
+    if (cnt < 35) { eco.entities.push(createEntity(BIRD, b.x + rand(-20, 20), b.y + rand(-20, 20), eco.W, eco.H)); b.energy -= 15; eco.particles.push({ type: "birth", x: b.x, y: b.y, color: "#fbbf24", icon: "🐦", age: 0, maxAge: 60 }); }
   }
 }
 
@@ -271,7 +274,7 @@ function updateRabbit(r, eco) {
   r.energy = Math.min(r.maxEnergy, r.energy + 0.05);
   if (r.energy > 35 && Math.random() < 0.006) {
     const cnt = eco.entities.filter(e => e.type === RABBIT && e.alive).length;
-    if (cnt < 65) { eco.entities.push(createEntity(RABBIT, r.x + rand(-15, 15), r.y + rand(-15, 15), eco.W, eco.H)); r.energy -= 15; }
+    if (cnt < 65) { eco.entities.push(createEntity(RABBIT, r.x + rand(-15, 15), r.y + rand(-15, 15), eco.W, eco.H)); r.energy -= 15; eco.particles.push({ type: "birth", x: r.x, y: r.y, color: "#d1d5db", icon: "🐰", age: 0, maxAge: 60 }); }
   }
 }
 
@@ -326,6 +329,11 @@ function tickEcosystem(eco) {
 
   eco.entities = eco.entities.filter(e => e.alive || e.age < 60);
 
+  // Age and clean up particles
+  for (const p of eco.particles) p.age++;
+  eco.particles = eco.particles.filter(p => p.age < p.maxAge);
+  if (eco.particles.length > 50) eco.particles = eco.particles.slice(-50);
+
   const treeCount = eco.entities.filter(e => e.type === TREE && e.alive).length;
   const avgGrowth = eco.entities.filter(e => e.type === TREE && e.alive).reduce((s, t) => s + t.growth, 0) / Math.max(treeCount, 1);
   eco.vegetationHealth = clamp(treeCount * 0.7 + avgGrowth * 25, 0, 100);
@@ -336,7 +344,9 @@ function tickEcosystem(eco) {
   eco.riverWidth = TERRAIN.riverBaseW + (100 - eco.riverHealth) * 0.35;
 
   if (eco.tick % 100 === 0 && eco.vegetationHealth > 30 && treeCount < 130) {
-    eco.entities.push(createEntity(TREE, null, null, W, H));
+    const newTree = createEntity(TREE, null, null, W, H);
+    eco.entities.push(newTree);
+    eco.particles.push({ type: "growth", x: newTree.x, y: newTree.y, color: "#22c55e", icon: "🌱", age: 0, maxAge: 100 });
   }
 
   if (eco.tick % 60 === 0) {
@@ -735,13 +745,93 @@ function renderEcosystem(ctx, eco) {
     ctx.beginPath();
     ctx.arc(e.x, e.y, 3, 0, Math.PI * 2);
     ctx.fill();
-    // Smaller scatter particles
     for (let p = 0; p < 3; p++) {
       const px = e.x + Math.sin(e.age * 0.3 + p * 2) * (e.age * 0.3);
       const py = e.y + Math.cos(e.age * 0.3 + p * 2) * (e.age * 0.3);
       ctx.beginPath();
       ctx.arc(px, py, 1.5 * fade, 0, Math.PI * 2);
       ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ─── Birth / Growth / Kill particle effects ───────────────────────────
+  for (const p of eco.particles) {
+    const t = p.age / p.maxAge; // 0 → 1 over lifetime
+    const fade = t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8; // fade in then out
+
+    if (p.type === "birth") {
+      // Expanding ring + rising text
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = fade * 0.7;
+      const radius = 4 + p.age * 0.25;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+      // Inner sparkles
+      for (let s = 0; s < 4; s++) {
+        const angle = (s / 4) * Math.PI * 2 + p.age * 0.05;
+        const sr = radius * 0.6;
+        const sx = p.x + Math.cos(angle) * sr;
+        const sy = p.y + Math.sin(angle) * sr;
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = fade * 0.5;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Rising label
+      if (p.age < 50) {
+        ctx.globalAlpha = fade * 0.9;
+        ctx.fillStyle = p.color;
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillText("+" + p.icon, p.x + 8, p.y - 6 - p.age * 0.2);
+      }
+    } else if (p.type === "growth") {
+      // Green sprouting effect — expanding rings with leaf symbol
+      ctx.globalAlpha = fade * 0.6;
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth = 1.2;
+      const gr = 3 + p.age * 0.15;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, gr, 0, Math.PI * 2);
+      ctx.stroke();
+      // Small green dots rising like growth
+      for (let s = 0; s < 3; s++) {
+        const gy = p.y - p.age * 0.12 - s * 5;
+        const gx = p.x + Math.sin(p.age * 0.1 + s * 2) * 4;
+        ctx.fillStyle = "#4ade80";
+        ctx.globalAlpha = fade * 0.4;
+        ctx.beginPath();
+        ctx.arc(gx, gy, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (p.age < 60) {
+        ctx.globalAlpha = fade * 0.8;
+        ctx.fillStyle = "#22c55e";
+        ctx.font = "9px sans-serif";
+        ctx.fillText("🌱", p.x - 5, p.y - 8 - p.age * 0.15);
+      }
+    } else if (p.type === "kill") {
+      // Red burst effect
+      ctx.globalAlpha = fade * 0.8;
+      ctx.fillStyle = "#ef4444";
+      const kr = 2 + p.age * 0.3;
+      for (let s = 0; s < 6; s++) {
+        const angle = (s / 6) * Math.PI * 2 + p.age * 0.03;
+        const sx = p.x + Math.cos(angle) * kr;
+        const sy = p.y + Math.sin(angle) * kr;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 2 * (1 - t), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (p.age < 40) {
+        ctx.globalAlpha = fade * 0.9;
+        ctx.fillStyle = "#fca5a5";
+        ctx.font = "bold 10px sans-serif";
+        ctx.fillText("💀", p.x + 6, p.y - 4 - p.age * 0.15);
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -1639,6 +1729,397 @@ function getCascadeAlerts(stats) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SOUNDSCAPE MANAGER (Tone.js)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class SoundscapeManager {
+  constructor() {
+    this.initialized = false;
+    this.enabled = true;
+    this.masterVolume = -25;
+    this.synths = {};
+    this.noises = {};
+    this.lastWolfHowl = 0;
+  }
+
+  async init() {
+    if (this.initialized) return;
+    await Tone.start();
+
+    // Ambient pad
+    this.synths.pad = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.5, decay: 0.5, sustain: 0.3, release: 2 }
+    }).toDestination();
+    this.synths.pad.volume.value = this.masterVolume;
+
+    // Bird synth
+    this.synths.bird = new Tone.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.01, decay: 0.1, sustain: 0, release: 0.1 }
+    }).toDestination();
+    this.synths.bird.volume.value = -18;
+
+    // Water noise
+    this.noises.water = new Tone.Noise("pink").connect(new Tone.Filter({ frequency: 2000, type: 'lowpass' }).toDestination());
+    this.noises.water.volume.value = -28;
+
+    // Wind noise
+    this.noises.wind = new Tone.Noise("brown").connect(new Tone.Filter({ frequency: 300, type: 'lowpass' }).toDestination());
+    this.noises.wind.volume.value = -32;
+
+    // Pulse synth
+    this.synths.pulse = new Tone.MembraneSynth().toDestination();
+    this.synths.pulse.volume.value = -28;
+
+    this.noises.water.start();
+    this.noises.wind.start();
+
+    this.initialized = true;
+  }
+
+  update(stats, alerts) {
+    if (!this.initialized || !this.enabled) return;
+
+    const health = (stats.wolves / 15) * 100 + (stats.trees / 85) * 100;
+
+    // Update ambient pad chord based on ecosystem health
+    const score = (stats.wolves / 15 + stats.elk / 45 + stats.trees / 90) * 33;
+    let notes = [];
+    if (score > 70) notes = ['C4', 'E4', 'G4'];
+    else if (score > 40) notes = ['A3', 'C4', 'E4'];
+    else notes = ['B3', 'D4', 'F4'];
+
+    this.synths.pad.triggerAttackRelease(notes, '8n');
+
+    // Bird calls proportional to songbird population
+    if (stats.birds >= 5 && Math.random() < 0.3) {
+      const noteNum = Math.floor(Math.random() * 12) + 84;
+      const freq = 440 * Math.pow(2, (noteNum - 69) / 12);
+      this.synths.bird.frequency.value = freq;
+      this.synths.bird.triggerAttackRelease('64n');
+    }
+
+    // Water/wind modulation
+    this.noises.water.volume.value = -28 + (stats.riverHealth / 100) * 8;
+    this.noises.wind.volume.value = -32 + (100 - stats.vegetationHealth) / 100 * 6;
+
+    // Wolf howl event
+    if (stats.wolves > 0 && Math.random() < 0.01 && Date.now() - this.lastWolfHowl > 15000) {
+      this.triggerWolfHowl();
+      this.lastWolfHowl = Date.now();
+    }
+
+    // Tension pulse for alerts
+    if (alerts.length > 0 && Math.random() < (alerts.length > 2 ? 0.4 : 0.2)) {
+      const interval = alerts.length > 2 ? 1.5 : 4;
+      this.synths.pulse.triggerAttackRelease('32n', interval * 0.3);
+    }
+  }
+
+  triggerWolfHowl() {
+    const howl = new Tone.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.1, decay: 2, sustain: 0, release: 0.5 }
+    }).toDestination();
+    howl.volume.value = -22;
+    howl.frequency.exponentialRampToValueAtTime(180, Tone.now() + 2);
+    howl.triggerAttackRelease(2);
+  }
+
+  setMute(muted) {
+    this.enabled = !muted;
+    if (this.initialized) {
+      Object.values(this.synths).forEach(s => { if (s) s.volume.value = muted ? -80 : this.masterVolume; });
+      Object.values(this.noises).forEach(n => { if (n) n.volume.value = muted ? -80 : -28; });
+    }
+  }
+}
+
+const soundscape = new SoundscapeManager();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EDUCATIONAL INSIGHTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const INSIGHTS = [
+  {
+    id: 'wolves_extinct',
+    condition: (s) => s.wolves === 0,
+    cooldown: 300,
+    title: 'Trophic Cascade Begins',
+    narrative: 'With no wolves to hunt elk, the herbivore population will explode unchecked. Vegetation will be stripped bare, rivers will destabilize, and the entire ecosystem unravels from the top down.',
+    concept: 'Trophic Cascade',
+    conceptDetail: 'Changes at the top of the food chain cascade down, dramatically altering lower trophic levels.',
+    historicalNote: 'This happened in Yellowstone 1926-1995: after wolves were extirpated, elk populations surged from ~4,000 to over 25,000.',
+    severity: 'critical'
+  },
+  {
+    id: 'wolves_critical',
+    condition: (s) => s.wolves > 0 && s.wolves < 4,
+    cooldown: 250,
+    title: 'Genetic Bottleneck Risk',
+    narrative: 'Your wolf population is dangerously small. Pack structure collapses, genetic diversity plummets, and inbreeding weakens the population. A single disease could wipe them out entirely.',
+    concept: 'Population Genetics',
+    conceptDetail: 'Small populations lose genetic diversity, making them vulnerable to disease and environmental stress.',
+    historicalNote: 'Real Yellowstone reintroduction began with just 14 wolves (from Canada) in 1995-96.',
+    severity: 'warning'
+  },
+  {
+    id: 'wolves_healthy',
+    condition: (s) => s.wolves >= 10 && s.wolves <= 22,
+    cooldown: 400,
+    title: 'Keystone Species at Work',
+    narrative: 'Wolves are a keystone species: their presence supports the entire ecosystem far beyond their numbers. They drive elk to fear certain areas (ecology of fear), preventing overgrazing and allowing vegetation to recover.',
+    concept: 'Keystone Species',
+    conceptDetail: 'A species whose impact on the ecosystem is disproportionately large relative to its abundance.',
+    historicalNote: 'Yellowstone wolves have supported recovery of willows, aspen, cottonwoods, and enabled beaver return.',
+    severity: 'info'
+  },
+  {
+    id: 'wolves_overpop',
+    condition: (s) => s.wolves > 35,
+    cooldown: 300,
+    title: 'Predator Overpopulation',
+    narrative: 'Too many wolves are depleting elk faster than reproduction can sustain. Prey availability will crash, forcing wolves to starve or move to other regions.',
+    concept: 'Predator-Prey Dynamics',
+    conceptDetail: 'Predator and prey populations oscillate cyclically: more prey → more predators → predators eat prey → fewer predators.',
+    historicalNote: 'Yellowstone\'s wolf population stabilized around 80-110 by 2000s, with natural predator-prey balance.',
+    severity: 'warning'
+  },
+  {
+    id: 'elk_overpop',
+    condition: (s) => s.elk > 85,
+    cooldown: 280,
+    title: 'Elk Herbivory Crisis',
+    narrative: 'Massive elk herds are stripping vegetation to nubs. Willows and aspens disappear, riparian zones collapse into bare banks, and erosion accelerates. Fish lose shade and stream integrity.',
+    concept: 'Carrying Capacity',
+    conceptDetail: 'The maximum population size an environment can sustain based on available resources.',
+    historicalNote: 'Pre-wolf Yellowstone had 25,000+ elk destroying all woody vegetation; now stabilized at 4,000-8,000 with wolves.',
+    severity: 'critical'
+  },
+  {
+    id: 'elk_rising',
+    condition: (s) => s.elk > 60 && s.elk <= 85,
+    cooldown: 250,
+    title: 'Insufficient Predation Pressure',
+    narrative: 'Elk numbers are rising without enough wolf predation to control them. Vegetation health is declining rapidly. If this trend continues, overgrazing will destabilize the entire system.',
+    concept: 'Predator-Prey Equilibrium',
+    conceptDetail: 'Stable ecosystems maintain balance between predator and prey through density-dependent predation.',
+    historicalNote: 'Yellowstone achieved balance around 2000-2010, with 50-80 wolves keeping elk at sustainable levels.',
+    severity: 'warning'
+  },
+  {
+    id: 'elk_balanced',
+    condition: (s) => s.elk >= 30 && s.elk <= 60,
+    cooldown: 350,
+    title: 'Ecology of Fear',
+    narrative: 'With predators present, elk avoid dangerous areas like river valleys, allowing willows and aspens to regenerate. Even without being hunted, fear of wolves changes elk behavior profoundly.',
+    concept: 'Ecology of Fear',
+    conceptDetail: 'Predator presence alters prey behavior (e.g., habitat use, foraging patterns) independent of predation mortality.',
+    historicalNote: 'GPS-collared Yellowstone elk avoid river valleys 4-5x more often when wolves are present.',
+    severity: 'info'
+  },
+  {
+    id: 'vegetation_collapse',
+    condition: (s) => s.vegetationHealth < 25,
+    cooldown: 300,
+    title: 'Vegetation Collapse Cascade',
+    narrative: 'Tree cover has collapsed. Riverbanks erode without root systems. Beavers lose willows to build dams. Songbirds find no nesting sites. Fish lose riparian shade. The entire ecosystem is in freefall.',
+    concept: 'Ecosystem Engineer',
+    conceptDetail: 'Species that create or maintain habitats, enabling other species to thrive (e.g., willows stabilize banks).',
+    historicalNote: 'Yellowstone willows declined 99% from 1920s-1990s; recovery began only after wolf reintroduction.',
+    severity: 'critical'
+  },
+  {
+    id: 'vegetation_recovering',
+    condition: (s) => s.vegetationHealth > 40 && s.vegetationHealth < 70,
+    cooldown: 320,
+    title: 'Vegetation Recovery Underway',
+    narrative: 'Trees are recovering! Willows and aspens are regrowing, stabilizing riverbanks and creating habitat for countless species. This recovery took Yellowstone decades after wolves returned.',
+    concept: 'Ecological Succession',
+    conceptDetail: 'The predictable sequence of species and ecosystem changes following disturbance or restoration.',
+    historicalNote: 'Yellowstone aspen recovery accelerated 5-10 years after wolf reintroduction reduced elk browse.',
+    severity: 'info'
+  },
+  {
+    id: 'river_unstable',
+    condition: (s) => s.riverHealth < 35,
+    cooldown: 270,
+    title: 'Riparian Zone Destruction',
+    narrative: 'Rivers are destabilizing. Without willows to hold banks and beaver dams to slow flow, channels are widening, water clarity dropping, and temperature rising. Fish habitat is degrading rapidly.',
+    concept: 'Riparian Zone',
+    conceptDetail: 'Transitional areas between terrestrial and aquatic ecosystems that regulate water quality, temperature, and structure.',
+    historicalNote: 'Pre-wolf Yellowstone had braided, eroded channels; post-wolf recovery includes narrower, deeper streams with better structure.',
+    severity: 'warning'
+  },
+  {
+    id: 'beaver_decline',
+    condition: (s) => s.beavers < 3,
+    cooldown: 280,
+    title: 'Beaver Disappearance',
+    narrative: 'With few willows and aspens available, beavers cannot survive or reproduce. Dams are abandoned, wetlands drain, and water retention plummets. The landscape dries out further.',
+    concept: 'Ecosystem Engineering',
+    conceptDetail: 'Beavers are the ultimate ecosystem engineers, creating wetlands that support fish, waterfowl, and vegetation.',
+    historicalNote: 'Yellowstone had ~9,000 beaver ponds in 1800s, crashed to near zero by 1950s, now recovering toward ~4,000+.',
+    severity: 'warning'
+  },
+  {
+    id: 'beaver_returning',
+    condition: (s) => s.beavers >= 5,
+    cooldown: 350,
+    title: 'Beaver Engineering',
+    narrative: 'Beavers are building dams again! Their construction creates wetlands, raises water tables, slows erosion, and provides habitat for fish, amphibians, and migratory birds. One beaver is worth thousands of engineers.',
+    concept: 'Ecosystem Engineer',
+    conceptDetail: 'Beavers modify their environment more dramatically than any species except humans.',
+    historicalNote: 'Beaver ponds in restored Yellowstone create oases of biodiversity in otherwise dry landscapes.',
+    severity: 'info'
+  },
+  {
+    id: 'songbird_decline',
+    condition: (s) => s.birds < 6,
+    cooldown: 250,
+    title: 'Nesting Habitat Loss',
+    narrative: 'Songbirds are disappearing. Mature willows and aspens that provide nesting sites are gone. Ground-nesting birds suffer heavy predation from coyotes. Bird diversity plummets.',
+    concept: 'Indicator Species',
+    conceptDetail: 'Species whose presence or abundance reflects ecosystem health; used to monitor environmental conditions.',
+    historicalNote: 'Yellowstone songbird diversity increased after wolves returned and willows regrew.',
+    severity: 'warning'
+  },
+  {
+    id: 'coyote_boom',
+    condition: (s) => s.coyotes > 28,
+    cooldown: 300,
+    title: 'Mesopredator Release',
+    narrative: 'Without wolves to suppress them, coyotes boom explosively. They devastate ground-nesting songbirds and small mammals. This is called mesopredator release: mid-level predators run rampant without apex predator control.',
+    concept: 'Mesopredator Release',
+    conceptDetail: 'When apex predators are removed, mid-level predators increase dramatically and overexploit prey.',
+    historicalNote: 'Yellowstone coyote populations exploded 1926-1995; wolf return naturally suppressed coyote numbers.',
+    severity: 'warning'
+  },
+  {
+    id: 'rabbit_crash',
+    condition: (s) => s.rabbits < 10,
+    cooldown: 280,
+    title: 'Secondary Cascade Effect',
+    narrative: 'Rabbit populations have crashed—likely due to coyote overpredation. This cascades further: fewer rabbits means fewer predators survive, but also loss of food for other species.',
+    concept: 'Cascading Trophic Effects',
+    conceptDetail: 'Changes in one species ripple through the food web, affecting multiple trophic levels.',
+    historicalNote: 'Small mammal populations in Yellowstone showed strong recovery correlating with wolf presence.',
+    severity: 'warning'
+  },
+  {
+    id: 'fish_decline',
+    condition: (s) => s.fish < 10,
+    cooldown: 250,
+    title: 'Aquatic Habitat Degradation',
+    narrative: 'Fish populations are in freefall. Causes: rising water temperature from lack of riparian shade, erosion-caused siltation, poor water quality, and unstable stream structure. Fish are sentinel species for river health.',
+    concept: 'Indicator Species',
+    conceptDetail: 'Fish health directly reflects water quality, temperature stability, and habitat complexity.',
+    historicalNote: 'Yellowstone cutthroat trout recovered after willows regrew, providing shade and cooler water.',
+    severity: 'critical'
+  },
+  {
+    id: 'hunting_pressure',
+    condition: (s) => s.hunters > 8,
+    cooldown: 300,
+    title: 'Historical Extirpation Campaign',
+    narrative: 'Heavy hunting is eliminating wolves rapidly. This mirrors the 1914-1926 extirpation campaign when the U.S. government systematically killed every wolf in Yellowstone to protect livestock.',
+    concept: 'Human-Driven Extinction',
+    conceptDetail: 'Species can be driven to extinction or near-extinction through deliberate human hunting.',
+    historicalNote: 'Last Yellowstone wolf was killed in 1926; reintroduction took 69 years to achieve in 1995.',
+    severity: 'critical'
+  },
+  {
+    id: 'full_recovery',
+    condition: (s) => s.wolves >= 12 && s.elk <= 55 && s.vegetationHealth > 70 && s.riverHealth > 65 && s.beavers > 5,
+    cooldown: 500,
+    title: 'Ecosystem Restoration Success',
+    narrative: 'Your ecosystem has recovered! Wolves control elk, vegetation thrives, rivers stabilize, beavers engineer wetlands, and fish and birds return. This mirrors Yellowstone\'s real recovery from 1995 onward.',
+    concept: 'Ecological Restoration',
+    conceptDetail: 'Active intervention to restore degraded ecosystems to functional, healthy states.',
+    historicalNote: 'Yellowstone\'s trophic cascade recovery is considered one of ecology\'s great success stories.',
+    severity: 'info'
+  },
+  {
+    id: 'wolves_reintroduced',
+    condition: (s) => s.wolves > 0 && s.vegetationHealth < 40,
+    cooldown: 400,
+    title: '1995 Reintroduction',
+    narrative: 'Wolves have returned to a degraded ecosystem. In real Yellowstone, 14 wolves from Canada were released in 1995-96. Their presence triggered ecosystem-wide recovery over the following decades.',
+    concept: 'Keystone Species Reintroduction',
+    conceptDetail: 'Restoring a keystone species can initiate cascading recovery throughout a damaged ecosystem.',
+    historicalNote: 'The 1995 reintroduction was controversial but became a textbook example of successful restoration.',
+    severity: 'info'
+  }
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FOOD WEB DIAGRAM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function FoodWebDiagram({ stats }) {
+  const nodes = [
+    { id: 'wolf', label: '🐺', x: 125, y: 30, pop: stats.wolves, ideal: 15 },
+    { id: 'elk', label: '🦌', x: 60, y: 80, pop: stats.elk, ideal: 45 },
+    { id: 'veg', label: '🌿', x: 30, y: 150, pop: stats.vegetationHealth, ideal: 80 },
+    { id: 'river', label: '🏞️', x: 125, y: 150, pop: stats.riverHealth, ideal: 85 },
+    { id: 'beaver', label: '🦫', x: 190, y: 80, pop: stats.beavers, ideal: 8 },
+    { id: 'fish', label: '🐟', x: 200, y: 150, pop: stats.fish, ideal: 20 },
+    { id: 'bird', label: '🐦', x: 90, y: 30, pop: stats.birds, ideal: 15 },
+    { id: 'coyote', label: '🐾', x: 190, y: 30, pop: stats.coyotes, ideal: 10 },
+    { id: 'rabbit', label: '🐰', x: 150, y: 80, pop: stats.rabbits, ideal: 25 },
+  ];
+
+  const getHealth = (pop, ideal) => {
+    const ratio = pop / ideal;
+    if (ratio > 1.3 || ratio < 0.6) return 'critical';
+    if (ratio > 1.1 || ratio < 0.8) return 'stressed';
+    return 'healthy';
+  };
+
+  const getColor = (health) => {
+    if (health === 'critical') return '#ef4444';
+    if (health === 'stressed') return '#eab308';
+    return '#22c55e';
+  };
+
+  const edges = [
+    { from: 'wolf', to: 'elk' },
+    { from: 'wolf', to: 'coyote' },
+    { from: 'elk', to: 'veg' },
+    { from: 'veg', to: 'river' },
+    { from: 'veg', to: 'beaver' },
+    { from: 'veg', to: 'bird' },
+    { from: 'beaver', to: 'river' },
+    { from: 'river', to: 'fish' },
+    { from: 'coyote', to: 'rabbit' },
+  ];
+
+  return (
+    <svg width="250" height="200" style={{ background: '#0f172a', borderRadius: 8, border: '1px solid #334155', padding: 8 }}>
+      {edges.map((e, i) => {
+        const fromN = nodes.find(n => n.id === e.from);
+        const toN = nodes.find(n => n.id === e.to);
+        return (
+          <line key={i} x1={fromN.x} y1={fromN.y} x2={toN.x} y2={toN.y} stroke="#475569" strokeWidth="1" opacity="0.6" />
+        );
+      })}
+      {nodes.map(n => {
+        const health = getHealth(n.pop, n.ideal);
+        const color = getColor(health);
+        return (
+          <g key={n.id}>
+            <circle cx={n.x} cy={n.y} r="12" fill={color} opacity="0.3" stroke={color} strokeWidth="2" />
+            <text x={n.x} y={n.y + 5} textAnchor="middle" fontSize="14">{n.label}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // UI CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1666,6 +2147,7 @@ export default function Simulation() {
   const canvasRef = useRef(null);
   const ecoRef = useRef(null);
   const animRef = useRef(null);
+  const insightCounterRef = useRef({});
   const [canvasSize, setCanvasSize] = useState({ w: 1280, h: 720 });
   const [running, setRunning] = useState(false);
   const [stats, setStats] = useState({ wolves: 12, elk: 45, trees: 90, beavers: 8, coyotes: 10, fish: 22, birds: 15, rabbits: 28, hunters: 0, vegetationHealth: 85, riverHealth: 90 });
@@ -1679,6 +2161,13 @@ export default function Simulation() {
   const [showChart, setShowChart] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [audioInit, setAudioInit] = useState(false);
+  const [audioMuted, setAudioMuted] = useState(false);
+  const [showWeb, setShowWeb] = useState(false);
+  const [showLearn, setShowLearn] = useState(false);
+  const [currentInsight, setCurrentInsight] = useState(null);
+  const [insightLog, setInsightLog] = useState([]);
+  const [insightTimer, setInsightTimer] = useState(0);
 
   // Responsive canvas sizing with ResizeObserver
   useEffect(() => {
@@ -1723,9 +2212,31 @@ export default function Simulation() {
     setStats({ ...eco.stats });
     setHistory([...eco.history]);
     setScore(eco.balanceScore);
-    setAlerts(getCascadeAlerts(eco.stats));
+    const newAlerts = getCascadeAlerts(eco.stats);
+    setAlerts(newAlerts);
+
+    // Update soundscape every 60 ticks
+    if (audioInit && eco.tick % 60 === 0) {
+      soundscape.update(eco.stats, newAlerts);
+    }
+
+    // Check for insights every 120 ticks
+    if (eco.tick % 120 === 0) {
+      for (const insight of INSIGHTS) {
+        if (!insightCounterRef.current[insight.id]) insightCounterRef.current[insight.id] = 0;
+        insightCounterRef.current[insight.id]++;
+        if (insight.condition(eco.stats) && insightCounterRef.current[insight.id] >= insight.cooldown / 120) {
+          setCurrentInsight(insight);
+          setInsightTimer(12 * 60); // 12 seconds at 60 fps
+          setInsightLog(prev => [insight, ...prev.slice(0, 7)]);
+          insightCounterRef.current[insight.id] = 0;
+          break;
+        }
+      }
+    }
+
     animRef.current = requestAnimationFrame(loop);
-  }, [speed]);
+  }, [speed, audioInit]);
 
   useEffect(() => {
     if (running) animRef.current = requestAnimationFrame(loop);
@@ -1824,6 +2335,35 @@ export default function Simulation() {
     recountStats(eco);
   };
 
+  const handleAudioToggle = async () => {
+    if (!audioInit) {
+      try {
+        await soundscape.init();
+        setAudioInit(true);
+      } catch (e) {
+        console.error('Audio init failed:', e);
+      }
+    } else {
+      setAudioMuted(!audioMuted);
+      soundscape.setMute(!audioMuted);
+    }
+  };
+
+  // Update insight timer
+  useEffect(() => {
+    if (insightTimer > 0) {
+      const timeout = setTimeout(() => setInsightTimer(insightTimer - 1), 16);
+      return () => clearTimeout(timeout);
+    } else if (currentInsight && insightTimer === 0) {
+      setCurrentInsight(null);
+    }
+  }, [insightTimer, currentInsight]);
+
+  // Reset insight counters on reset
+  useEffect(() => {
+    insightCounterRef.current = {};
+  }, []);
+
   const selectedInfo = SPECIES.find(s => s.type === selectedTool);
 
   // ─── STYLES ──────────────────────────────────────────────────────────
@@ -1877,6 +2417,11 @@ export default function Simulation() {
         <button onClick={() => handlePreset("heavyHunting")} style={S.btn(false, "#f97316")}>Heavy Hunt</button>
         <button onClick={() => handlePreset("recovery")} style={S.btn(false, "#3b82f6")}>Recovery</button>
 
+        <button onClick={handleAudioToggle} style={S.btn(audioInit, "#a78bfa")} title={audioInit ? (audioMuted ? 'Unmute' : 'Mute') : 'Click for sound'}>
+          {audioInit ? (audioMuted ? '🔇' : '🔊') : '🔇'} Sound
+        </button>
+        <button onClick={() => setShowWeb(!showWeb)} style={S.btn(showWeb, "#fb923c")}>🕸️ Web</button>
+        <button onClick={() => setShowLearn(!showLearn)} style={S.btn(showLearn, "#60a5fa")}>📚 Learn</button>
         <button onClick={() => setShowChart(!showChart)} style={S.btn(showChart, "#60a5fa")}>📊</button>
         <button onClick={() => setShowHelp(true)} style={S.btn(false, "#64748b")}>?</button>
       </div>
@@ -1978,6 +2523,47 @@ export default function Simulation() {
                   <span style={{ fontSize: 10, color: "#d6d3d1", marginLeft: 6 }}>{a.msg}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Food Web overlay */}
+          {showWeb && (
+            <div style={{ position: "absolute", bottom: 12, right: 12, zIndex: 6, pointerEvents: "auto" }}>
+              <FoodWebDiagram stats={stats} />
+            </div>
+          )}
+
+          {/* Learning panel */}
+          {showLearn && (
+            <div style={{ position: "absolute", top: 12, right: 12, width: 320, maxHeight: "calc(100vh - 80px)", background: "rgba(15,23,42,0.96)", borderRadius: 12, padding: 14, border: "1px solid #334155", backdropFilter: "blur(8px)", zIndex: 6, overflow: "hidden", display: "flex", flexDirection: "column", pointerEvents: "auto" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#60a5fa" }}>📚 Ecological Insights</span>
+                <button onClick={() => setShowLearn(false)} style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>✕</button>
+              </div>
+
+              {currentInsight && (
+                <div style={{ background: "#1e293b", borderRadius: 8, padding: 10, marginBottom: 10, borderLeft: `3px solid ${currentInsight.severity === 'critical' ? '#ef4444' : currentInsight.severity === 'warning' ? '#eab308' : '#34d399'}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: currentInsight.severity === 'critical' ? '#fca5a5' : currentInsight.severity === 'warning' ? '#fcd34d' : '#86efac', marginBottom: 4 }}>{currentInsight.title}</div>
+                  <div style={{ fontSize: 10, color: "#cbd5e1", marginBottom: 6, lineHeight: 1.4 }}>{currentInsight.narrative}</div>
+                  <div style={{ fontSize: 9, padding: 6, background: "#0f172a", borderRadius: 4, marginBottom: 4 }}>
+                    <div style={{ color: "#60a5fa", fontWeight: 600 }}>Concept: {currentInsight.concept}</div>
+                    <div style={{ color: "#94a3b8", fontSize: 8, marginTop: 2 }}>{currentInsight.conceptDetail}</div>
+                  </div>
+                  <div style={{ fontSize: 9, color: "#64748b", fontStyle: 'italic' }}>Yellowstone: {currentInsight.historicalNote}</div>
+                </div>
+              )}
+
+              {insightLog.length > 0 && (
+                <div style={{ flex: 1, overflowY: "auto", borderTop: "1px solid #334155", paddingTop: 10 }}>
+                  <div style={{ fontSize: 9, fontWeight: 600, color: "#475569", marginBottom: 6 }}>Recent Insights</div>
+                  {insightLog.map((insight, i) => (
+                    <div key={i} style={{ fontSize: 9, padding: 6, background: "#0f172a", borderRadius: 4, marginBottom: 4, cursor: 'pointer', borderLeft: `2px solid ${insight.severity === 'critical' ? '#ef4444' : insight.severity === 'warning' ? '#eab308' : '#34d399'}` }}>
+                      <div style={{ fontWeight: 600, color: "#cbd5e1", marginBottom: 2 }}>{insight.title}</div>
+                      <div style={{ color: "#94a3b8", fontSize: 8 }}>{insight.narrative.substring(0, 60)}...</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
