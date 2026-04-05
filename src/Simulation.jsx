@@ -349,6 +349,28 @@ function tickEcosystem(eco) {
     eco.particles.push({ type: "growth", x: newTree.x, y: newTree.y, color: "#22c55e", icon: "🌱", age: 0, maxAge: 100 });
   }
 
+  // Auto-spawn/despawn hunters (historical hunting pressure simulation)
+  if (eco.tick % 200 === 0) {
+    const hunterCount = eco.entities.filter(e => e.type === HUNTER && e.alive).length;
+    const wolfCount = eco.entities.filter(e => e.type === WOLF && e.alive).length;
+    // Hunters appear when wolf population is notable, simulating conflict
+    if (wolfCount > 6 && hunterCount < 6 && Math.random() < 0.35) {
+      const h = createEntity(HUNTER, null, null, W, H);
+      eco.entities.push(h);
+      eco.particles.push({ type: "birth", x: h.x, y: h.y, color: "#ef4444", icon: "🎯", age: 0, maxAge: 80 });
+    }
+    // Small chance of hunter arriving regardless (random pressure)
+    if (hunterCount < 3 && Math.random() < 0.12) {
+      const h = createEntity(HUNTER, null, null, W, H);
+      eco.entities.push(h);
+    }
+    // Hunters leave after a while or when wolves are scarce
+    if (hunterCount > 0 && (wolfCount < 3 || Math.random() < 0.2)) {
+      const hunter = eco.entities.find(e => e.type === HUNTER && e.alive);
+      if (hunter) hunter.alive = false;
+    }
+  }
+
   if (eco.tick % 60 === 0) {
     const stats = {
       wolves: eco.entities.filter(e => e.type === WOLF && e.alive).length,
@@ -1839,6 +1861,86 @@ class SoundscapeManager {
 const soundscape = new SoundscapeManager();
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// NARRATOR MANAGER (Web Speech API)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class NarratorManager {
+  constructor() {
+    this.enabled = true;
+    this.speaking = false;
+    this.queue = [];
+    this.lastSpoken = {};
+    this.minInterval = 20000; // 20s between same insight
+    this.globalCooldown = 8000; // 8s between any narration
+    this.lastAnySpoken = 0;
+    this.voice = null;
+    this.initialized = false;
+  }
+
+  init() {
+    if (this.initialized || !window.speechSynthesis) return;
+    // Pick a calm, clear voice
+    const pickVoice = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length === 0) return;
+      // Prefer English voices with "natural" or "Google" or "Samantha"
+      this.voice = voices.find(v => /samantha|google.*us|natural|daniel/i.test(v.name) && /en/i.test(v.lang))
+        || voices.find(v => /en[-_]us/i.test(v.lang))
+        || voices.find(v => /en/i.test(v.lang))
+        || voices[0];
+      this.initialized = true;
+    };
+    pickVoice();
+    if (!this.initialized) {
+      window.speechSynthesis.onvoiceschanged = pickVoice;
+    }
+  }
+
+  speak(insightId, text) {
+    if (!this.enabled || !window.speechSynthesis) return;
+    if (!this.initialized) this.init();
+
+    const now = Date.now();
+    // Global cooldown
+    if (now - this.lastAnySpoken < this.globalCooldown) return;
+    // Per-insight cooldown
+    if (this.lastSpoken[insightId] && now - this.lastSpoken[insightId] < this.minInterval) return;
+
+    // Cancel any current speech to keep things snappy
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.92;
+    utterance.pitch = 1.0;
+    utterance.volume = 0.85;
+    if (this.voice) utterance.voice = this.voice;
+
+    utterance.onstart = () => { this.speaking = true; };
+    utterance.onend = () => { this.speaking = false; };
+    utterance.onerror = () => { this.speaking = false; };
+
+    window.speechSynthesis.speak(utterance);
+    this.lastSpoken[insightId] = now;
+    this.lastAnySpoken = now;
+  }
+
+  setEnabled(on) {
+    this.enabled = on;
+    if (!on && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      this.speaking = false;
+    }
+  }
+
+  stop() {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    this.speaking = false;
+  }
+}
+
+const narrator = new NarratorManager();
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // EDUCATIONAL INSIGHTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1849,6 +1951,7 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Trophic Cascade Begins',
     narrative: 'With no wolves to hunt elk, the herbivore population will explode unchecked. Vegetation will be stripped bare, rivers will destabilize, and the entire ecosystem unravels from the top down.',
+    spokenLine: 'The wolves are gone. Without an apex predator, elk will multiply unchecked and begin stripping the land bare. This is how a trophic cascade begins.',
     concept: 'Trophic Cascade',
     conceptDetail: 'Changes at the top of the food chain cascade down, dramatically altering lower trophic levels.',
     historicalNote: 'This happened in Yellowstone 1926-1995: after wolves were extirpated, elk populations surged from ~4,000 to over 25,000.',
@@ -1860,6 +1963,7 @@ const INSIGHTS = [
     cooldown: 250,
     title: 'Genetic Bottleneck Risk',
     narrative: 'Your wolf population is dangerously small. Pack structure collapses, genetic diversity plummets, and inbreeding weakens the population. A single disease could wipe them out entirely.',
+    spokenLine: 'Only a handful of wolves remain. At this size, the pack loses genetic diversity and one disease outbreak could finish them off entirely.',
     concept: 'Population Genetics',
     conceptDetail: 'Small populations lose genetic diversity, making them vulnerable to disease and environmental stress.',
     historicalNote: 'Real Yellowstone reintroduction began with just 14 wolves (from Canada) in 1995-96.',
@@ -1871,6 +1975,7 @@ const INSIGHTS = [
     cooldown: 400,
     title: 'Keystone Species at Work',
     narrative: 'Wolves are a keystone species: their presence supports the entire ecosystem far beyond their numbers. They drive elk to fear certain areas (ecology of fear), preventing overgrazing and allowing vegetation to recover.',
+    spokenLine: 'Wolves are thriving, and the ecosystem feels it. Just their presence changes elk behavior, keeping them away from riverbanks and letting the willows grow back.',
     concept: 'Keystone Species',
     conceptDetail: 'A species whose impact on the ecosystem is disproportionately large relative to its abundance.',
     historicalNote: 'Yellowstone wolves have supported recovery of willows, aspen, cottonwoods, and enabled beaver return.',
@@ -1882,6 +1987,7 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Predator Overpopulation',
     narrative: 'Too many wolves are depleting elk faster than reproduction can sustain. Prey availability will crash, forcing wolves to starve or move to other regions.',
+    spokenLine: 'Too many wolves. They are hunting elk faster than the herd can reproduce. Soon prey will collapse, and the wolves themselves will starve.',
     concept: 'Predator-Prey Dynamics',
     conceptDetail: 'Predator and prey populations oscillate cyclically: more prey → more predators → predators eat prey → fewer predators.',
     historicalNote: 'Yellowstone\'s wolf population stabilized around 80-110 by 2000s, with natural predator-prey balance.',
@@ -1893,6 +1999,7 @@ const INSIGHTS = [
     cooldown: 280,
     title: 'Elk Herbivory Crisis',
     narrative: 'Massive elk herds are stripping vegetation to nubs. Willows and aspens disappear, riparian zones collapse into bare banks, and erosion accelerates. Fish lose shade and stream integrity.',
+    spokenLine: 'Elk herds are enormous now. They are devouring every willow and aspen in sight. The riverbanks are eroding and fish are losing the shade they need to survive.',
     concept: 'Carrying Capacity',
     conceptDetail: 'The maximum population size an environment can sustain based on available resources.',
     historicalNote: 'Pre-wolf Yellowstone had 25,000+ elk destroying all woody vegetation; now stabilized at 4,000-8,000 with wolves.',
@@ -1904,6 +2011,7 @@ const INSIGHTS = [
     cooldown: 250,
     title: 'Insufficient Predation Pressure',
     narrative: 'Elk numbers are rising without enough wolf predation to control them. Vegetation health is declining rapidly. If this trend continues, overgrazing will destabilize the entire system.',
+    spokenLine: 'Elk numbers are climbing fast. Without enough predators to keep them in check, overgrazing will start to destabilize the whole system.',
     concept: 'Predator-Prey Equilibrium',
     conceptDetail: 'Stable ecosystems maintain balance between predator and prey through density-dependent predation.',
     historicalNote: 'Yellowstone achieved balance around 2000-2010, with 50-80 wolves keeping elk at sustainable levels.',
@@ -1915,6 +2023,7 @@ const INSIGHTS = [
     cooldown: 350,
     title: 'Ecology of Fear',
     narrative: 'With predators present, elk avoid dangerous areas like river valleys, allowing willows and aspens to regenerate. Even without being hunted, fear of wolves changes elk behavior profoundly.',
+    spokenLine: 'This is the ecology of fear in action. Elk are avoiding the river valleys because wolves patrol there. That alone lets the willows and aspens grow back.',
     concept: 'Ecology of Fear',
     conceptDetail: 'Predator presence alters prey behavior (e.g., habitat use, foraging patterns) independent of predation mortality.',
     historicalNote: 'GPS-collared Yellowstone elk avoid river valleys 4-5x more often when wolves are present.',
@@ -1926,6 +2035,7 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Vegetation Collapse Cascade',
     narrative: 'Tree cover has collapsed. Riverbanks erode without root systems. Beavers lose willows to build dams. Songbirds find no nesting sites. Fish lose riparian shade. The entire ecosystem is in freefall.',
+    spokenLine: 'Vegetation has collapsed. Without trees to hold the banks, rivers erode. Beavers have no willows for dams, birds have no place to nest. Everything is connected.',
     concept: 'Ecosystem Engineer',
     conceptDetail: 'Species that create or maintain habitats, enabling other species to thrive (e.g., willows stabilize banks).',
     historicalNote: 'Yellowstone willows declined 99% from 1920s-1990s; recovery began only after wolf reintroduction.',
@@ -1937,6 +2047,7 @@ const INSIGHTS = [
     cooldown: 320,
     title: 'Vegetation Recovery Underway',
     narrative: 'Trees are recovering! Willows and aspens are regrowing, stabilizing riverbanks and creating habitat for countless species. This recovery took Yellowstone decades after wolves returned.',
+    spokenLine: 'The trees are coming back. Willows and aspens are regrowing along the banks, stabilizing the soil. In real Yellowstone, this recovery took decades.',
     concept: 'Ecological Succession',
     conceptDetail: 'The predictable sequence of species and ecosystem changes following disturbance or restoration.',
     historicalNote: 'Yellowstone aspen recovery accelerated 5-10 years after wolf reintroduction reduced elk browse.',
@@ -1948,6 +2059,7 @@ const INSIGHTS = [
     cooldown: 270,
     title: 'Riparian Zone Destruction',
     narrative: 'Rivers are destabilizing. Without willows to hold banks and beaver dams to slow flow, channels are widening, water clarity dropping, and temperature rising. Fish habitat is degrading rapidly.',
+    spokenLine: 'The rivers are in trouble. Without tree roots and beaver dams, the channels are widening, water is warming, and fish habitat is falling apart.',
     concept: 'Riparian Zone',
     conceptDetail: 'Transitional areas between terrestrial and aquatic ecosystems that regulate water quality, temperature, and structure.',
     historicalNote: 'Pre-wolf Yellowstone had braided, eroded channels; post-wolf recovery includes narrower, deeper streams with better structure.',
@@ -1959,6 +2071,7 @@ const INSIGHTS = [
     cooldown: 280,
     title: 'Beaver Disappearance',
     narrative: 'With few willows and aspens available, beavers cannot survive or reproduce. Dams are abandoned, wetlands drain, and water retention plummets. The landscape dries out further.',
+    spokenLine: 'Beavers are vanishing. Without willows to eat and build with, their dams collapse. Wetlands drain, and the whole landscape dries out.',
     concept: 'Ecosystem Engineering',
     conceptDetail: 'Beavers are the ultimate ecosystem engineers, creating wetlands that support fish, waterfowl, and vegetation.',
     historicalNote: 'Yellowstone had ~9,000 beaver ponds in 1800s, crashed to near zero by 1950s, now recovering toward ~4,000+.',
@@ -1970,6 +2083,7 @@ const INSIGHTS = [
     cooldown: 350,
     title: 'Beaver Engineering',
     narrative: 'Beavers are building dams again! Their construction creates wetlands, raises water tables, slows erosion, and provides habitat for fish, amphibians, and migratory birds. One beaver is worth thousands of engineers.',
+    spokenLine: 'Beavers are back at work building dams. Their wetlands raise water tables, slow erosion, and create habitat for dozens of other species. Nature is own best engineer.',
     concept: 'Ecosystem Engineer',
     conceptDetail: 'Beavers modify their environment more dramatically than any species except humans.',
     historicalNote: 'Beaver ponds in restored Yellowstone create oases of biodiversity in otherwise dry landscapes.',
@@ -1981,6 +2095,7 @@ const INSIGHTS = [
     cooldown: 250,
     title: 'Nesting Habitat Loss',
     narrative: 'Songbirds are disappearing. Mature willows and aspens that provide nesting sites are gone. Ground-nesting birds suffer heavy predation from coyotes. Bird diversity plummets.',
+    spokenLine: 'Songbirds are disappearing. The mature trees they need for nesting are gone, and unchecked coyotes are picking off the ground-nesters.',
     concept: 'Indicator Species',
     conceptDetail: 'Species whose presence or abundance reflects ecosystem health; used to monitor environmental conditions.',
     historicalNote: 'Yellowstone songbird diversity increased after wolves returned and willows regrew.',
@@ -1992,6 +2107,7 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Mesopredator Release',
     narrative: 'Without wolves to suppress them, coyotes boom explosively. They devastate ground-nesting songbirds and small mammals. This is called mesopredator release: mid-level predators run rampant without apex predator control.',
+    spokenLine: 'Coyotes are booming. This is mesopredator release. Without wolves keeping them in check, coyotes devastate songbirds and small mammals.',
     concept: 'Mesopredator Release',
     conceptDetail: 'When apex predators are removed, mid-level predators increase dramatically and overexploit prey.',
     historicalNote: 'Yellowstone coyote populations exploded 1926-1995; wolf return naturally suppressed coyote numbers.',
@@ -2003,6 +2119,7 @@ const INSIGHTS = [
     cooldown: 280,
     title: 'Secondary Cascade Effect',
     narrative: 'Rabbit populations have crashed—likely due to coyote overpredation. This cascades further: fewer rabbits means fewer predators survive, but also loss of food for other species.',
+    spokenLine: 'Rabbit populations have crashed, likely from coyote overpredation. The cascade keeps rippling further down the food web.',
     concept: 'Cascading Trophic Effects',
     conceptDetail: 'Changes in one species ripple through the food web, affecting multiple trophic levels.',
     historicalNote: 'Small mammal populations in Yellowstone showed strong recovery correlating with wolf presence.',
@@ -2014,6 +2131,7 @@ const INSIGHTS = [
     cooldown: 250,
     title: 'Aquatic Habitat Degradation',
     narrative: 'Fish populations are in freefall. Causes: rising water temperature from lack of riparian shade, erosion-caused siltation, poor water quality, and unstable stream structure. Fish are sentinel species for river health.',
+    spokenLine: 'Fish are dying off. Warmer water, eroded banks, and silted streams are destroying their habitat. Fish are the canary in the coal mine for river health.',
     concept: 'Indicator Species',
     conceptDetail: 'Fish health directly reflects water quality, temperature stability, and habitat complexity.',
     historicalNote: 'Yellowstone cutthroat trout recovered after willows regrew, providing shade and cooler water.',
@@ -2025,6 +2143,7 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Historical Extirpation Campaign',
     narrative: 'Heavy hunting is eliminating wolves rapidly. This mirrors the 1914-1926 extirpation campaign when the U.S. government systematically killed every wolf in Yellowstone to protect livestock.',
+    spokenLine: 'Heavy hunting is wiping out the wolves. This mirrors exactly what happened in 1914 to 1926, when the U.S. government exterminated every wolf in Yellowstone.',
     concept: 'Human-Driven Extinction',
     conceptDetail: 'Species can be driven to extinction or near-extinction through deliberate human hunting.',
     historicalNote: 'Last Yellowstone wolf was killed in 1926; reintroduction took 69 years to achieve in 1995.',
@@ -2036,6 +2155,7 @@ const INSIGHTS = [
     cooldown: 500,
     title: 'Ecosystem Restoration Success',
     narrative: 'Your ecosystem has recovered! Wolves control elk, vegetation thrives, rivers stabilize, beavers engineer wetlands, and fish and birds return. This mirrors Yellowstone\'s real recovery from 1995 onward.',
+    spokenLine: 'The ecosystem has recovered. Wolves control elk, vegetation thrives, rivers run clear, and beavers are engineering wetlands again. This is what Yellowstone looks like today.',
     concept: 'Ecological Restoration',
     conceptDetail: 'Active intervention to restore degraded ecosystems to functional, healthy states.',
     historicalNote: 'Yellowstone\'s trophic cascade recovery is considered one of ecology\'s great success stories.',
@@ -2047,6 +2167,7 @@ const INSIGHTS = [
     cooldown: 400,
     title: '1995 Reintroduction',
     narrative: 'Wolves have returned to a degraded ecosystem. In real Yellowstone, 14 wolves from Canada were released in 1995-96. Their presence triggered ecosystem-wide recovery over the following decades.',
+    spokenLine: 'Wolves are back in a damaged landscape. In 1995, just 14 Canadian wolves were released into Yellowstone. What followed was one of ecology is greatest recovery stories.',
     concept: 'Keystone Species Reintroduction',
     conceptDetail: 'Restoring a keystone species can initiate cascading recovery throughout a damaged ecosystem.',
     historicalNote: 'The 1995 reintroduction was controversial but became a textbook example of successful restoration.',
@@ -2126,13 +2247,17 @@ function FoodWebDiagram({ stats }) {
 const SPECIES = [
   { type: WOLF, icon: "🐺", label: "Wolves", key: "wolves", color: "#94a3b8", desc: "Apex predator. Controls elk, suppresses coyotes." },
   { type: ELK, icon: "🦌", label: "Elk", key: "elk", color: "#a78bfa", desc: "Primary herbivore. Grazes willows and aspens." },
-  { type: HUNTER, icon: "🎯", label: "Hunters", key: "hunters", color: "#ef4444", desc: "Removes wolves and elk. Disrupts natural balance." },
   { type: TREE, icon: "🌲", label: "Trees", key: "trees", color: "#22c55e", desc: "Willows & aspens. Stabilize riverbanks." },
   { type: BEAVER, icon: "🦫", label: "Beavers", key: "beavers", color: "#fb923c", desc: "Build dams from willows. Create wetland habitat." },
   { type: COYOTE, icon: "🐾", label: "Coyotes", key: "coyotes", color: "#d97706", desc: "Mesopredator. Boom without wolf suppression." },
   { type: FISH, icon: "🐟", label: "Fish", key: "fish", color: "#67e8f9", desc: "Need cool, shaded, stable water." },
   { type: BIRD, icon: "🐦", label: "Songbirds", key: "birds", color: "#fbbf24", desc: "Need mature trees for nesting." },
   { type: RABBIT, icon: "🐰", label: "Rabbits", key: "rabbits", color: "#d1d5db", desc: "Prey for coyotes. Population indicator." },
+];
+
+// Locked species shown as info-only in panel
+const LOCKED_SPECIES = [
+  { type: HUNTER, icon: "🎯", label: "Hunters", key: "hunters", color: "#ef4444", desc: "Auto — appear when wolves are present. Simulates historical hunting pressure." },
 ];
 
 function getScoreColor(s) { return s >= 75 ? "#22c55e" : s >= 50 ? "#eab308" : s >= 25 ? "#f97316" : "#ef4444"; }
@@ -2163,6 +2288,9 @@ export default function Simulation() {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [audioInit, setAudioInit] = useState(false);
   const [audioMuted, setAudioMuted] = useState(false);
+  const [narratorEnabled, setNarratorEnabled] = useState(true);
+  const [narratorActive, setNarratorActive] = useState(false);
+  const [spokenSubtitle, setSpokenSubtitle] = useState(null);
   const [showWeb, setShowWeb] = useState(false);
   const [showLearn, setShowLearn] = useState(false);
   const [currentInsight, setCurrentInsight] = useState(null);
@@ -2230,13 +2358,20 @@ export default function Simulation() {
           setInsightTimer(12 * 60); // 12 seconds at 60 fps
           setInsightLog(prev => [insight, ...prev.slice(0, 7)]);
           insightCounterRef.current[insight.id] = 0;
+          // Speak the insight via narrator
+          if (narratorEnabled && insight.spokenLine) {
+            narrator.speak(insight.id, insight.spokenLine);
+            setNarratorActive(true);
+            setSpokenSubtitle(insight.spokenLine);
+            setTimeout(() => { setNarratorActive(false); setSpokenSubtitle(null); }, 10000);
+          }
           break;
         }
       }
     }
 
     animRef.current = requestAnimationFrame(loop);
-  }, [speed, audioInit]);
+  }, [speed, audioInit, narratorEnabled]);
 
   useEffect(() => {
     if (running) animRef.current = requestAnimationFrame(loop);
@@ -2296,6 +2431,7 @@ export default function Simulation() {
   const handleReset = () => {
     cancelAnimationFrame(animRef.current);
     setRunning(false);
+    narrator.stop();
     ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h);
     const eco = ecoRef.current;
     setStats(eco.stats);
@@ -2348,6 +2484,17 @@ export default function Simulation() {
       soundscape.setMute(!audioMuted);
     }
   };
+
+  const handleNarratorToggle = () => {
+    const next = !narratorEnabled;
+    setNarratorEnabled(next);
+    narrator.setEnabled(next);
+    if (!next) setNarratorActive(false);
+    if (next) narrator.init();
+  };
+
+  // Init narrator on mount
+  useEffect(() => { narrator.init(); }, []);
 
   // Update insight timer
   useEffect(() => {
@@ -2420,6 +2567,10 @@ export default function Simulation() {
         <button onClick={handleAudioToggle} style={S.btn(audioInit, "#a78bfa")} title={audioInit ? (audioMuted ? 'Unmute' : 'Mute') : 'Click for sound'}>
           {audioInit ? (audioMuted ? '🔇' : '🔊') : '🔇'} Sound
         </button>
+        <button onClick={handleNarratorToggle} style={{ ...S.btn(narratorEnabled, "#f472b6"), position: "relative" }} title={narratorEnabled ? 'Mute narrator' : 'Enable narrator'}>
+          {narratorEnabled ? '🎙️' : '🔕'} Narrator
+          {narratorActive && narratorEnabled && <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, borderRadius: "50%", background: "#f472b6", animation: "pulse 1s infinite" }} />}
+        </button>
         <button onClick={() => setShowWeb(!showWeb)} style={S.btn(showWeb, "#fb923c")}>🕸️ Web</button>
         <button onClick={() => setShowLearn(!showLearn)} style={S.btn(showLearn, "#60a5fa")}>📚 Learn</button>
         <button onClick={() => setShowChart(!showChart)} style={S.btn(showChart, "#60a5fa")}>📊</button>
@@ -2464,6 +2615,22 @@ export default function Simulation() {
                       <div style={{ fontSize: 9, color: "#64748b" }}>{stats[sp.key] ?? 0}</div>
                     </div>
                   </button>
+                ))}
+              </div>
+
+              {/* Locked species (hunters - auto-controlled) */}
+              <div style={{ padding: "2px 6px", marginTop: 2 }}>
+                {LOCKED_SPECIES.map(sp => (
+                  <div key={sp.type} style={{
+                    display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "5px 7px", borderRadius: 6,
+                    background: "rgba(239,68,68,0.08)", border: "1px dashed #47415530", opacity: 0.7,
+                  }}>
+                    <span style={{ fontSize: 15 }}>{sp.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: sp.color }}>{sp.label} <span style={{ fontSize: 8, color: "#64748b" }}>AUTO</span></div>
+                      <div style={{ fontSize: 9, color: "#64748b" }}>{stats[sp.key] ?? 0} active</div>
+                    </div>
+                  </div>
                 ))}
               </div>
 
@@ -2523,6 +2690,35 @@ export default function Simulation() {
                   <span style={{ fontSize: 10, color: "#d6d3d1", marginLeft: 6 }}>{a.msg}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Narrator subtitle bar */}
+          {spokenSubtitle && narratorEnabled && (
+            <div style={{
+              position: "absolute", bottom: alerts.length > 0 ? 80 : 16, left: "50%", transform: "translateX(-50%)",
+              maxWidth: "70%", background: "rgba(0,0,0,0.82)", borderRadius: 10, padding: "10px 20px",
+              border: "1px solid rgba(244,114,182,0.3)", backdropFilter: "blur(8px)", zIndex: 5, pointerEvents: "none",
+              animation: "subtitleFadeIn 0.4s ease-out",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 14 }}>🎙️</span>
+                <span style={{ fontSize: 12, color: "#f1f5f9", lineHeight: 1.5, fontStyle: "italic" }}>{spokenSubtitle}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Season & Year indicator */}
+          {running && ecoRef.current && (
+            <div style={{
+              position: "absolute", top: 8, right: 8, background: "rgba(15,23,42,0.85)", borderRadius: 8,
+              padding: "4px 12px", fontSize: 11, color: "#94a3b8", pointerEvents: "none", border: "1px solid #334155",
+              display: "flex", alignItems: "center", gap: 8,
+            }}>
+              <span style={{ fontWeight: 700, color: ["#86efac","#22c55e","#f97316","#93c5fd"][Math.floor(ecoRef.current.season % 4)] }}>
+                {["Spring","Summer","Autumn","Winter"][Math.floor(ecoRef.current.season % 4)]}
+              </span>
+              <span style={{ color: "#64748b" }}>Year {Math.floor(ecoRef.current.season / 4) + 1}</span>
             </div>
           )}
 
