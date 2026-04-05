@@ -18,7 +18,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 // ─── Types ────────────────────────────────────────────────────────────────────
 const WOLF = "wolf", ELK = "elk", TREE = "tree", BEAVER = "beaver",
   COYOTE = "coyote", FISH = "fish", BIRD = "bird", RABBIT = "rabbit",
-  HUNTER = "hunter";
+  HUNTER = "hunter", BEAR = "bear";
 
 // ─── Terrain constants (will be scaled to canvas size) ────────────────────────
 const TERRAIN = {
@@ -48,6 +48,7 @@ function createEntity(type, x, y, W, H) {
     case FISH: return { ...base, x: x ?? RX + rand(-12, 12), y: y ?? rand(20, H - 20), speed: 1.0, maxEnergy: 80 };
     case BIRD: return { ...base, x: x ?? rand(W * 0.4, W * 0.78), y: y ?? rand(20, H - 20), speed: 2.0, maxEnergy: 60, flutterPhase: rand(0, Math.PI * 2) };
     case RABBIT: return { ...base, x: x ?? rand(20, W * 0.5), y: y ?? rand(20, H - 20), speed: 2.2, maxEnergy: 50 };
+    case BEAR: return { ...base, x: x ?? rand(W * 0.3, W * 0.75), y: y ?? rand(20, H - 20), speed: 1.1, energy: 140, maxEnergy: 180, huntCooldown: 0 };
     case HUNTER: return { ...base, x: x ?? rand(10, 40), y: y ?? rand(40, H - 40), speed: 0.8, maxEnergy: 200, energy: 200, huntCooldown: 0, killCount: 0 };
     default: return base;
   }
@@ -72,11 +73,12 @@ function initEcosystem(W, H) {
       ...spawnMultiple(FISH, 22, W, H),
       ...spawnMultiple(BIRD, 15, W, H),
       ...spawnMultiple(RABBIT, 28, W, H),
+      ...spawnMultiple(BEAR, 6, W, H),
     ],
     W, H, tick: 0, season: 0,
     vegetationHealth: 85, riverHealth: 90,
     riverWidth: TERRAIN.riverBaseW,
-    stats: { wolves: 12, elk: 45, trees: 90, beavers: 8, coyotes: 10, fish: 22, birds: 15, rabbits: 28, hunters: 0, vegetationHealth: 85, riverHealth: 90 },
+    stats: { wolves: 12, elk: 45, trees: 90, beavers: 8, coyotes: 10, fish: 22, birds: 15, rabbits: 28, bears: 6, hunters: 0, vegetationHealth: 85, riverHealth: 90 },
     history: [], balanceScore: 75,
     particles: [],
   };
@@ -141,9 +143,18 @@ function updateWolf(w, eco) {
   }
   w.state = "wander";
   wander(w, eco.W, eco.H);
-  if (w.energy > 120 && Math.random() < 0.003) {
+  // Dynamic reproduction: more wolves = more breeding, but density-limited
+  if (w.energy > 100 && Math.random() < 0.003) {
     const cnt = eco.entities.filter(e => e.type === WOLF && e.alive).length;
-    if (cnt < 45) { eco.entities.push(createEntity(WOLF, w.x + rand(-20, 20), w.y + rand(-20, 20), eco.W, eco.H)); w.energy -= 40; eco.particles.push({ type: "birth", x: w.x, y: w.y, color: "#94a3b8", icon: "🐺", age: 0, maxAge: 80 }); }
+    const elkCnt = eco.entities.filter(e => e.type === ELK && e.alive).length;
+    // Wolves reproduce more when prey is abundant, less when overcrowded
+    const preyRatio = clamp(elkCnt / 30, 0.2, 2.0);
+    const densityFactor = clamp(1.5 - cnt / 25, 0.1, 1.5);
+    if (cnt < 50 && Math.random() < preyRatio * densityFactor) {
+      eco.entities.push(createEntity(WOLF, w.x + rand(-20, 20), w.y + rand(-20, 20), eco.W, eco.H));
+      w.energy -= 40;
+      eco.particles.push({ type: "birth", x: w.x, y: w.y, color: "#94a3b8", icon: "🐺", age: 0, maxAge: 80 });
+    }
   }
 }
 
@@ -173,9 +184,19 @@ function updateElk(elk, eco) {
   }
   elk.state = "wander";
   wander(elk, eco.W, eco.H);
-  if (elk.energy > 90 && Math.random() < 0.005) {
+  // Dynamic reproduction: elk breed faster with more elk and less predation, but density-limited
+  if (elk.energy > 80 && Math.random() < 0.005) {
     const cnt = eco.entities.filter(e => e.type === ELK && e.alive).length;
-    if (cnt < 130) { eco.entities.push(createEntity(ELK, elk.x + rand(-20, 20), elk.y + rand(-20, 20), eco.W, eco.H)); elk.energy -= 30; eco.particles.push({ type: "birth", x: elk.x, y: elk.y, color: "#a78bfa", icon: "🦌", age: 0, maxAge: 80 }); }
+    const wolfCnt = eco.entities.filter(e => e.type === WOLF && e.alive).length;
+    // Elk reproduce faster without wolves (no fear effect), slower when overcrowded
+    const fearFactor = wolfCnt < 3 ? 2.0 : wolfCnt < 8 ? 1.3 : 0.8;
+    const densityFactor = clamp(1.8 - cnt / 60, 0.1, 2.0);
+    const vegFactor = clamp(eco.vegetationHealth / 50, 0.3, 1.5); // need food to breed
+    if (cnt < 150 && Math.random() < fearFactor * densityFactor * vegFactor) {
+      eco.entities.push(createEntity(ELK, elk.x + rand(-20, 20), elk.y + rand(-20, 20), eco.W, eco.H));
+      elk.energy -= 30;
+      eco.particles.push({ type: "birth", x: elk.x, y: elk.y, color: "#a78bfa", icon: "🦌", age: 0, maxAge: 80 });
+    }
   }
 }
 
@@ -184,9 +205,17 @@ function updateTree(tree, eco) {
   const vf = eco.vegetationHealth / 100;
   tree.growth = clamp(tree.growth + 0.0005 * vf, 0, tree.maxGrowth);
   tree.health = clamp(tree.health + 0.02, 0, 100);
-  if (tree.growth > 0.8 && Math.random() < 0.001 * vf) {
+  // Dynamic reproduction: more mature trees = more seed dispersal, density-limited
+  if (tree.growth > 0.7 && Math.random() < 0.0012 * vf) {
     const cnt = eco.entities.filter(e => e.type === TREE && e.alive).length;
-    if (cnt < 150) { eco.entities.push(createEntity(TREE, tree.x + rand(-50, 50), tree.y + rand(-50, 50), eco.W, eco.H)); eco.particles.push({ type: "growth", x: tree.x, y: tree.y, color: "#22c55e", icon: "🌱", age: 0, maxAge: 100 }); }
+    const matureTrees = eco.entities.filter(e => e.type === TREE && e.alive && e.growth > 0.6).length;
+    const seedFactor = clamp(matureTrees / 30, 0.3, 2.0);
+    const elkCnt = eco.entities.filter(e => e.type === ELK && e.alive).length;
+    const browsePressure = clamp(1.5 - elkCnt / 50, 0.2, 1.5); // heavy elk = fewer saplings survive
+    if (cnt < 160 && Math.random() < seedFactor * browsePressure) {
+      eco.entities.push(createEntity(TREE, tree.x + rand(-50, 50), tree.y + rand(-50, 50), eco.W, eco.H));
+      eco.particles.push({ type: "growth", x: tree.x, y: tree.y, color: "#22c55e", icon: "🌱", age: 0, maxAge: 100 });
+    }
   }
 }
 
@@ -197,10 +226,17 @@ function updateBeaver(b, eco) {
   else wander(b, eco.W, eco.H);
   const tree = findNearest(b, eco.entities, TREE, 90);
   if (tree && tree.growth > 0.5) eco.riverHealth = clamp(eco.riverHealth + 0.006, 0, 100);
-  if (b.energy > 70 && Math.random() < 0.002) {
+  // Dynamic reproduction: beavers breed when willows available, more beavers = more breeding (colony effect)
+  if (b.energy > 60 && Math.random() < 0.0025) {
     const tc = eco.entities.filter(e => e.type === TREE && e.alive && e.growth > 0.4).length;
     const bc = eco.entities.filter(e => e.type === BEAVER && e.alive).length;
-    if (tc > 20 && bc < 22) { eco.entities.push(createEntity(BEAVER, b.x + rand(-15, 15), b.y + rand(-15, 15), eco.W, eco.H)); b.energy -= 25; eco.particles.push({ type: "birth", x: b.x, y: b.y, color: "#fb923c", icon: "🦫", age: 0, maxAge: 80 }); }
+    const colonyFactor = clamp(bc / 4, 0.5, 1.8); // colony effect — more beavers = better breeding success
+    const willowFactor = clamp(tc / 25, 0.2, 2.0);
+    if (tc > 15 && bc < 25 && Math.random() < colonyFactor * willowFactor) {
+      eco.entities.push(createEntity(BEAVER, b.x + rand(-15, 15), b.y + rand(-15, 15), eco.W, eco.H));
+      b.energy -= 25;
+      eco.particles.push({ type: "birth", x: b.x, y: b.y, color: "#fb923c", icon: "🦫", age: 0, maxAge: 80 });
+    }
   }
 }
 
@@ -225,12 +261,20 @@ function updateCoyote(c, eco) {
   }
   c.state = "wander";
   wander(c, eco.W, eco.H);
+  // Dynamic reproduction: coyotes boom without wolves (mesopredator release), density-scaled
   const wc = eco.entities.filter(e => e.type === WOLF && e.alive).length;
-  const rr = wc < 3 ? 0.007 : 0.002;
-  if (c.energy > 70 && Math.random() < rr) {
+  const baseRate = wc < 3 ? 0.008 : wc < 8 ? 0.004 : 0.002;
+  if (c.energy > 60 && Math.random() < baseRate) {
     const cnt = eco.entities.filter(e => e.type === COYOTE && e.alive).length;
-    const cap = wc < 3 ? 40 : 16;
-    if (cnt < cap) { eco.entities.push(createEntity(COYOTE, c.x + rand(-20, 20), c.y + rand(-20, 20), eco.W, eco.H)); c.energy -= 25; eco.particles.push({ type: "birth", x: c.x, y: c.y, color: "#d97706", icon: "🐾", age: 0, maxAge: 80 }); }
+    const cap = wc < 3 ? 45 : wc < 8 ? 20 : 14;
+    const densityFactor = clamp(1.5 - cnt / (cap * 0.7), 0.1, 2.0);
+    const rabbitCnt = eco.entities.filter(e => e.type === RABBIT && e.alive).length;
+    const preyFactor = clamp(rabbitCnt / 15, 0.3, 1.5);
+    if (cnt < cap && Math.random() < densityFactor * preyFactor) {
+      eco.entities.push(createEntity(COYOTE, c.x + rand(-20, 20), c.y + rand(-20, 20), eco.W, eco.H));
+      c.energy -= 25;
+      eco.particles.push({ type: "birth", x: c.x, y: c.y, color: "#d97706", icon: "🐾", age: 0, maxAge: 80 });
+    }
   }
 }
 
@@ -240,9 +284,16 @@ function updateFish(f, eco) {
   const rw = eco.riverWidth;
   f.x = clamp(f.x + rand(-1.2, 1.2), RX - rw / 2 + 3, RX + rw / 2 - 3);
   f.y = clamp(f.y + rand(-1.8, 1.8), 5, eco.H - 5);
-  if (eco.riverHealth > 50 && Math.random() < 0.003) {
+  // Dynamic reproduction: fish breed based on river health and population density
+  const fishHealth = eco.riverHealth / 100;
+  if (fishHealth > 0.4 && Math.random() < 0.004 * fishHealth) {
     const cnt = eco.entities.filter(e => e.type === FISH && e.alive).length;
-    if (cnt < 40) { eco.entities.push(createEntity(FISH, f.x, f.y + rand(-10, 10), eco.W, eco.H)); eco.particles.push({ type: "birth", x: f.x, y: f.y, color: "#67e8f9", icon: "🐟", age: 0, maxAge: 60 }); }
+    const densityFactor = clamp(1.6 - cnt / 25, 0.1, 2.0);
+    const spawnFactor = clamp(cnt / 8, 0.3, 1.5); // need enough fish to find mates
+    if (cnt < 45 && Math.random() < densityFactor * spawnFactor) {
+      eco.entities.push(createEntity(FISH, f.x, f.y + rand(-10, 10), eco.W, eco.H));
+      eco.particles.push({ type: "birth", x: f.x, y: f.y, color: "#67e8f9", icon: "🐟", age: 0, maxAge: 60 });
+    }
   }
 }
 
@@ -254,10 +305,18 @@ function updateBird(b, eco) {
     moveToward(b, tree.x + Math.sin(b.flutterPhase) * 25, tree.y - 12, b.speed * 0.3);
     b.energy = Math.min(b.maxEnergy, b.energy + 0.1);
   } else { wander(b, eco.W, eco.H); b.energy -= 0.05; }
+  // Dynamic reproduction: birds breed based on tree availability, more birds = more breeding pairs
   const tc = eco.entities.filter(e => e.type === TREE && e.alive && e.growth > 0.5).length;
-  if (b.energy > 40 && tc > 20 && Math.random() < 0.002) {
+  if (b.energy > 35 && tc > 15 && Math.random() < 0.0025) {
     const cnt = eco.entities.filter(e => e.type === BIRD && e.alive).length;
-    if (cnt < 35) { eco.entities.push(createEntity(BIRD, b.x + rand(-20, 20), b.y + rand(-20, 20), eco.W, eco.H)); b.energy -= 15; eco.particles.push({ type: "birth", x: b.x, y: b.y, color: "#fbbf24", icon: "🐦", age: 0, maxAge: 60 }); }
+    const nestFactor = clamp(tc / 25, 0.3, 2.0);
+    const pairFactor = clamp(cnt / 6, 0.3, 1.5); // need enough birds to find mates
+    const densityFactor = clamp(1.5 - cnt / 25, 0.1, 1.8);
+    if (cnt < 40 && Math.random() < nestFactor * pairFactor * densityFactor) {
+      eco.entities.push(createEntity(BIRD, b.x + rand(-20, 20), b.y + rand(-20, 20), eco.W, eco.H));
+      b.energy -= 15;
+      eco.particles.push({ type: "birth", x: b.x, y: b.y, color: "#fbbf24", icon: "🐦", age: 0, maxAge: 60 });
+    }
   }
 }
 
@@ -272,9 +331,80 @@ function updateRabbit(r, eco) {
   r.state = "wander";
   wander(r, eco.W, eco.H);
   r.energy = Math.min(r.maxEnergy, r.energy + 0.05);
-  if (r.energy > 35 && Math.random() < 0.006) {
+  // Dynamic reproduction: rabbits are prolific breeders, density and vegetation dependent
+  if (r.energy > 30 && Math.random() < 0.007) {
     const cnt = eco.entities.filter(e => e.type === RABBIT && e.alive).length;
-    if (cnt < 65) { eco.entities.push(createEntity(RABBIT, r.x + rand(-15, 15), r.y + rand(-15, 15), eco.W, eco.H)); r.energy -= 15; eco.particles.push({ type: "birth", x: r.x, y: r.y, color: "#d1d5db", icon: "🐰", age: 0, maxAge: 60 }); }
+    const densityFactor = clamp(2.0 - cnt / 35, 0.1, 2.5);
+    const vegFactor = clamp(eco.vegetationHealth / 40, 0.3, 1.5);
+    const breedBoost = clamp(cnt / 10, 0.5, 1.8); // more rabbits = more encounters
+    if (cnt < 80 && Math.random() < densityFactor * vegFactor * breedBoost) {
+      eco.entities.push(createEntity(RABBIT, r.x + rand(-15, 15), r.y + rand(-15, 15), eco.W, eco.H));
+      r.energy -= 15;
+      eco.particles.push({ type: "birth", x: r.x, y: r.y, color: "#d1d5db", icon: "🐰", age: 0, maxAge: 60 });
+    }
+  }
+}
+
+function updateBear(bear, eco) {
+  bear.energy -= 0.09;
+  bear.huntCooldown = Math.max(0, bear.huntCooldown - 1);
+
+  // Bears fish when near river
+  const RX = eco.W * TERRAIN.riverPct;
+  if (Math.abs(bear.x - RX) < 50 && bear.huntCooldown <= 0) {
+    const fish = findNearest(bear, eco.entities, FISH, 40);
+    if (fish && bear.energy < 120) {
+      moveToward(bear, fish.x, fish.y, bear.speed * 0.8);
+      if (dist(bear, fish) < 18) {
+        fish.alive = false;
+        bear.energy = Math.min(bear.maxEnergy, bear.energy + 30);
+        bear.huntCooldown = 80;
+        eco.particles.push({ type: "kill", x: fish.x, y: fish.y, color: "#67e8f9", icon: "🐟", age: 0, maxAge: 60 });
+        return;
+      }
+      return;
+    }
+  }
+
+  // Bears forage from vegetation (berries) when hungry
+  if (bear.energy < 100 && eco.vegetationHealth > 30) {
+    const tree = findNearest(bear, eco.entities, TREE, 80);
+    if (tree && tree.growth > 0.6) {
+      moveToward(bear, tree.x, tree.y, bear.speed * 0.5);
+      if (dist(bear, tree) < 20) {
+        bear.energy = Math.min(bear.maxEnergy, bear.energy + 1.5);
+        // Bears don't damage trees as much as elk — they eat berries, not bark
+        tree.growth -= 0.002;
+      }
+      return;
+    }
+  }
+
+  // Bears avoid wolves in groups but occasionally contest kills
+  const wolf = findNearest(bear, eco.entities, WOLF, 60);
+  if (wolf) {
+    const wolfCount = eco.entities.filter(e => e.type === WOLF && e.alive && dist(bear, e) < 80).length;
+    if (wolfCount >= 3) {
+      // Flee from wolf packs
+      const dx = bear.x - wolf.x, dy = bear.y - wolf.y, d = Math.hypot(dx, dy) || 1;
+      bear.vx = (dx / d) * bear.speed; bear.vy = (dy / d) * bear.speed;
+      bear.state = "flee"; return;
+    }
+  }
+
+  bear.state = "wander";
+  wander(bear, eco.W, eco.H);
+
+  // Dynamic reproduction: bears breed slowly, need good food supply
+  if (bear.energy > 140 && Math.random() < 0.0015) {
+    const cnt = eco.entities.filter(e => e.type === BEAR && e.alive).length;
+    const foodScore = (eco.vegetationHealth / 100) * 0.5 + (eco.riverHealth / 100) * 0.5;
+    const densityFactor = clamp(1.3 - cnt / 10, 0.1, 1.3);
+    if (cnt < 18 && Math.random() < foodScore * densityFactor) {
+      eco.entities.push(createEntity(BEAR, bear.x + rand(-25, 25), bear.y + rand(-25, 25), eco.W, eco.H));
+      bear.energy -= 50;
+      eco.particles.push({ type: "birth", x: bear.x, y: bear.y, color: "#92400e", icon: "🐻", age: 0, maxAge: 80 });
+    }
   }
 }
 
@@ -316,6 +446,7 @@ function tickEcosystem(eco) {
       case FISH: updateFish(e, eco); break;
       case BIRD: updateBird(e, eco); break;
       case RABBIT: updateRabbit(e, eco); break;
+      case BEAR: updateBear(e, eco); break;
       case HUNTER: updateHunter(e, eco); break;
     }
     if (e.speed > 0 && e.type !== TREE) {
@@ -380,6 +511,7 @@ function tickEcosystem(eco) {
       fish: eco.entities.filter(e => e.type === FISH && e.alive).length,
       birds: eco.entities.filter(e => e.type === BIRD && e.alive).length,
       rabbits: eco.entities.filter(e => e.type === RABBIT && e.alive).length,
+      bears: eco.entities.filter(e => e.type === BEAR && e.alive).length,
       hunters: eco.entities.filter(e => e.type === HUNTER && e.alive).length,
       vegetationHealth: Math.round(eco.vegetationHealth),
       riverHealth: Math.round(eco.riverHealth),
@@ -395,7 +527,8 @@ function tickEcosystem(eco) {
     const fs = clamp(stats.fish / 18, 0, 1) * 7;
     const cs = (1 - Math.abs(stats.coyotes - 8) / 20) * 5;
     const rbs = (1 - Math.abs(stats.rabbits - 22) / 30) * 5;
-    eco.balanceScore = clamp(Math.round(ws + es + ts + rs + bs + bis + fs + cs + rbs), 0, 100);
+    const brs = clamp(stats.bears / 6, 0, 1) * 5; // bears contribute to balance
+    eco.balanceScore = clamp(Math.round(ws + es + ts + rs + bs + bis + fs + cs + rbs + brs), 0, 100);
 
     if (eco.history.length > 200) eco.history.shift();
     eco.history.push({ t: eco.history.length, ...stats, score: eco.balanceScore });
@@ -752,6 +885,7 @@ function renderEcosystem(ctx, eco) {
       case FISH: drawFish(ctx, e, tick); break;
       case BIRD: drawBird(ctx, e, tick); break;
       case RABBIT: drawRabbit(ctx, e, tick); break;
+      case BEAR: drawBear(ctx, e, tick); break;
       case HUNTER: drawHunter(ctx, e, tick); break;
     }
     ctx.restore();
@@ -1609,6 +1743,71 @@ function drawRabbit(ctx, e, tick) {
   ctx.stroke();
 }
 
+function drawBear(ctx, e, tick) {
+  ctx.translate(e.x, e.y);
+  const bob = Math.sin(e.age * 0.04) * 1.5;
+
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 10, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Legs
+  const lp = Math.sin(e.age * 0.08) * 3;
+  ctx.fillStyle = "#5c3a1e";
+  ctx.beginPath(); ctx.ellipse(-6 + lp, 9, 3, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(6 - lp, 9, 3, 4, 0, 0, Math.PI * 2); ctx.fill();
+
+  // Body — large, brown
+  const bodyGrad = ctx.createRadialGradient(0, bob, 2, 0, bob, 12);
+  bodyGrad.addColorStop(0, "#8B6914");
+  bodyGrad.addColorStop(0.5, "#6B4226");
+  bodyGrad.addColorStop(1, "#4a2d14");
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, bob, 10, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Head
+  ctx.fillStyle = "#5c3a1e";
+  ctx.beginPath();
+  ctx.ellipse(0, bob - 9, 6, 5.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ears
+  ctx.fillStyle = "#7a4a2a";
+  ctx.beginPath(); ctx.arc(-4.5, bob - 13, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(4.5, bob - 13, 2.5, 0, Math.PI * 2); ctx.fill();
+
+  // Snout
+  ctx.fillStyle = "#92400e";
+  ctx.beginPath();
+  ctx.ellipse(0, bob - 7, 3, 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Nose
+  ctx.fillStyle = "#1c1917";
+  ctx.beginPath();
+  ctx.ellipse(0, bob - 7.5, 1.2, 0.8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = "#1c1917";
+  ctx.beginPath();
+  ctx.arc(-2.5, bob - 10, 0.8, 0, Math.PI * 2);
+  ctx.arc(2.5, bob - 10, 0.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Hump (grizzly characteristic)
+  ctx.fillStyle = "#6B4226";
+  ctx.beginPath();
+  ctx.ellipse(-1, bob - 4, 5, 3, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
 function drawHunter(ctx, e, tick) {
   ctx.translate(e.x, e.y);
   const lp = Math.sin(e.age * 0.06) * 2.5;
@@ -1951,7 +2150,11 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Trophic Cascade Begins',
     narrative: 'With no wolves to hunt elk, the herbivore population will explode unchecked. Vegetation will be stripped bare, rivers will destabilize, and the entire ecosystem unravels from the top down.',
-    spokenLine: 'The wolves are gone. Without an apex predator, elk will multiply unchecked and begin stripping the land bare. This is how a trophic cascade begins.',
+    spokenLines: [
+      'The wolves are gone. Without an apex predator, elk will multiply unchecked and begin stripping the land bare. This is how a trophic cascade begins.',
+      'No more wolves. The top of the food chain just collapsed. Watch how every species below them starts to unravel.',
+      'This is exactly what happened in Yellowstone in 1926. Every wolf was killed, and the whole ecosystem paid the price for 70 years.',
+    ],
     concept: 'Trophic Cascade',
     conceptDetail: 'Changes at the top of the food chain cascade down, dramatically altering lower trophic levels.',
     historicalNote: 'This happened in Yellowstone 1926-1995: after wolves were extirpated, elk populations surged from ~4,000 to over 25,000.',
@@ -1963,7 +2166,11 @@ const INSIGHTS = [
     cooldown: 250,
     title: 'Genetic Bottleneck Risk',
     narrative: 'Your wolf population is dangerously small. Pack structure collapses, genetic diversity plummets, and inbreeding weakens the population. A single disease could wipe them out entirely.',
-    spokenLine: 'Only a handful of wolves remain. At this size, the pack loses genetic diversity and one disease outbreak could finish them off entirely.',
+    spokenLines: [
+      'Only a handful of wolves remain. At this size, the pack loses genetic diversity and one disease outbreak could finish them off entirely.',
+      'The wolf population is critically low. Without enough members to form stable packs, reproduction slows and inbreeding becomes a real threat.',
+      'We are looking at a genetic bottleneck. When a population drops this low, even small setbacks can push them to extinction.',
+    ],
     concept: 'Population Genetics',
     conceptDetail: 'Small populations lose genetic diversity, making them vulnerable to disease and environmental stress.',
     historicalNote: 'Real Yellowstone reintroduction began with just 14 wolves (from Canada) in 1995-96.',
@@ -1975,7 +2182,11 @@ const INSIGHTS = [
     cooldown: 400,
     title: 'Keystone Species at Work',
     narrative: 'Wolves are a keystone species: their presence supports the entire ecosystem far beyond their numbers. They drive elk to fear certain areas (ecology of fear), preventing overgrazing and allowing vegetation to recover.',
-    spokenLine: 'Wolves are thriving, and the ecosystem feels it. Just their presence changes elk behavior, keeping them away from riverbanks and letting the willows grow back.',
+    spokenLines: [
+      'Wolves are thriving, and the ecosystem feels it. Just their presence changes elk behavior, keeping them away from riverbanks and letting the willows grow back.',
+      'This is what a keystone species looks like. Wolves support far more life than their numbers suggest — the whole web depends on them.',
+      'Healthy wolf packs are patrolling the valleys. Elk are steering clear of the riverbanks, and that gives the willows a chance to recover.',
+    ],
     concept: 'Keystone Species',
     conceptDetail: 'A species whose impact on the ecosystem is disproportionately large relative to its abundance.',
     historicalNote: 'Yellowstone wolves have supported recovery of willows, aspen, cottonwoods, and enabled beaver return.',
@@ -1987,7 +2198,11 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Predator Overpopulation',
     narrative: 'Too many wolves are depleting elk faster than reproduction can sustain. Prey availability will crash, forcing wolves to starve or move to other regions.',
-    spokenLine: 'Too many wolves. They are hunting elk faster than the herd can reproduce. Soon prey will collapse, and the wolves themselves will starve.',
+    spokenLines: [
+      'Too many wolves. They are hunting elk faster than the herd can reproduce. Soon prey will collapse, and the wolves themselves will starve.',
+      'Predator overpopulation. In nature this self-corrects through starvation, but it is a painful process that takes the whole ecosystem down with it.',
+      'The wolf population has overshot. This is the boom side of a classic predator-prey cycle. The bust is coming.',
+    ],
     concept: 'Predator-Prey Dynamics',
     conceptDetail: 'Predator and prey populations oscillate cyclically: more prey → more predators → predators eat prey → fewer predators.',
     historicalNote: 'Yellowstone\'s wolf population stabilized around 80-110 by 2000s, with natural predator-prey balance.',
@@ -1999,7 +2214,11 @@ const INSIGHTS = [
     cooldown: 280,
     title: 'Elk Herbivory Crisis',
     narrative: 'Massive elk herds are stripping vegetation to nubs. Willows and aspens disappear, riparian zones collapse into bare banks, and erosion accelerates. Fish lose shade and stream integrity.',
-    spokenLine: 'Elk herds are enormous now. They are devouring every willow and aspen in sight. The riverbanks are eroding and fish are losing the shade they need to survive.',
+    spokenLines: [
+      'Elk herds are enormous now. They are devouring every willow and aspen in sight. The riverbanks are eroding and fish are losing the shade they need to survive.',
+      'This is what carrying capacity looks like when it is exceeded. The elk are eating themselves out of house and home.',
+      'Massive overgrazing. In the real Yellowstone, 25,000 elk stripped the park bare for decades. This is that same story playing out.',
+    ],
     concept: 'Carrying Capacity',
     conceptDetail: 'The maximum population size an environment can sustain based on available resources.',
     historicalNote: 'Pre-wolf Yellowstone had 25,000+ elk destroying all woody vegetation; now stabilized at 4,000-8,000 with wolves.',
@@ -2011,7 +2230,11 @@ const INSIGHTS = [
     cooldown: 250,
     title: 'Insufficient Predation Pressure',
     narrative: 'Elk numbers are rising without enough wolf predation to control them. Vegetation health is declining rapidly. If this trend continues, overgrazing will destabilize the entire system.',
-    spokenLine: 'Elk numbers are climbing fast. Without enough predators to keep them in check, overgrazing will start to destabilize the whole system.',
+    spokenLines: [
+      'Elk numbers are climbing fast. Without enough predators to keep them in check, overgrazing will start to destabilize the whole system.',
+      'The elk are rising and predation pressure is not keeping up. This is the early warning sign before vegetation collapse.',
+      'Not enough wolves to hold the elk back. If this continues, the trees will not survive the browsing pressure.',
+    ],
     concept: 'Predator-Prey Equilibrium',
     conceptDetail: 'Stable ecosystems maintain balance between predator and prey through density-dependent predation.',
     historicalNote: 'Yellowstone achieved balance around 2000-2010, with 50-80 wolves keeping elk at sustainable levels.',
@@ -2023,7 +2246,11 @@ const INSIGHTS = [
     cooldown: 350,
     title: 'Ecology of Fear',
     narrative: 'With predators present, elk avoid dangerous areas like river valleys, allowing willows and aspens to regenerate. Even without being hunted, fear of wolves changes elk behavior profoundly.',
-    spokenLine: 'This is the ecology of fear in action. Elk are avoiding the river valleys because wolves patrol there. That alone lets the willows and aspens grow back.',
+    spokenLines: [
+      'This is the ecology of fear in action. Elk are avoiding the river valleys because wolves patrol there. That alone lets the willows and aspens grow back.',
+      'Notice the elk are not just being killed by wolves — they are changing their behavior. Fear itself reshapes the landscape.',
+      'Wolves do not just reduce elk numbers. They move them. And that redistribution of grazing pressure is what lets the vegetation recover.',
+    ],
     concept: 'Ecology of Fear',
     conceptDetail: 'Predator presence alters prey behavior (e.g., habitat use, foraging patterns) independent of predation mortality.',
     historicalNote: 'GPS-collared Yellowstone elk avoid river valleys 4-5x more often when wolves are present.',
@@ -2035,7 +2262,11 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Vegetation Collapse Cascade',
     narrative: 'Tree cover has collapsed. Riverbanks erode without root systems. Beavers lose willows to build dams. Songbirds find no nesting sites. Fish lose riparian shade. The entire ecosystem is in freefall.',
-    spokenLine: 'Vegetation has collapsed. Without trees to hold the banks, rivers erode. Beavers have no willows for dams, birds have no place to nest. Everything is connected.',
+    spokenLines: [
+      'Vegetation has collapsed. Without trees to hold the banks, rivers erode. Beavers have no willows for dams, birds have no place to nest. Everything is connected.',
+      'The trees are gone. This triggers a domino effect: no roots means eroding banks, no shade means warming rivers, no cover means declining wildlife.',
+      'Yellowstone willows declined 99 percent between the 1920s and 1990s. You are watching the same pattern unfold right now.',
+    ],
     concept: 'Ecosystem Engineer',
     conceptDetail: 'Species that create or maintain habitats, enabling other species to thrive (e.g., willows stabilize banks).',
     historicalNote: 'Yellowstone willows declined 99% from 1920s-1990s; recovery began only after wolf reintroduction.',
@@ -2047,7 +2278,11 @@ const INSIGHTS = [
     cooldown: 320,
     title: 'Vegetation Recovery Underway',
     narrative: 'Trees are recovering! Willows and aspens are regrowing, stabilizing riverbanks and creating habitat for countless species. This recovery took Yellowstone decades after wolves returned.',
-    spokenLine: 'The trees are coming back. Willows and aspens are regrowing along the banks, stabilizing the soil. In real Yellowstone, this recovery took decades.',
+    spokenLines: [
+      'The trees are coming back. Willows and aspens are regrowing along the banks, stabilizing the soil. In real Yellowstone, this recovery took decades.',
+      'Ecological succession is underway. The vegetation is slowly rebuilding, and with it, the entire food web gets stronger.',
+      'Recovery is happening. Each tree that grows back holds a little more soil, shades a little more water, and shelters a few more birds.',
+    ],
     concept: 'Ecological Succession',
     conceptDetail: 'The predictable sequence of species and ecosystem changes following disturbance or restoration.',
     historicalNote: 'Yellowstone aspen recovery accelerated 5-10 years after wolf reintroduction reduced elk browse.',
@@ -2059,7 +2294,11 @@ const INSIGHTS = [
     cooldown: 270,
     title: 'Riparian Zone Destruction',
     narrative: 'Rivers are destabilizing. Without willows to hold banks and beaver dams to slow flow, channels are widening, water clarity dropping, and temperature rising. Fish habitat is degrading rapidly.',
-    spokenLine: 'The rivers are in trouble. Without tree roots and beaver dams, the channels are widening, water is warming, and fish habitat is falling apart.',
+    spokenLines: [
+      'The rivers are in trouble. Without tree roots and beaver dams, the channels are widening, water is warming, and fish habitat is falling apart.',
+      'The riparian zone is collapsing. These riverside ecosystems are among the most productive on earth, and they are disappearing.',
+      'River channels are braiding and widening — a classic sign of ecosystem degradation. Pre-wolf Yellowstone looked exactly like this.',
+    ],
     concept: 'Riparian Zone',
     conceptDetail: 'Transitional areas between terrestrial and aquatic ecosystems that regulate water quality, temperature, and structure.',
     historicalNote: 'Pre-wolf Yellowstone had braided, eroded channels; post-wolf recovery includes narrower, deeper streams with better structure.',
@@ -2071,7 +2310,11 @@ const INSIGHTS = [
     cooldown: 280,
     title: 'Beaver Disappearance',
     narrative: 'With few willows and aspens available, beavers cannot survive or reproduce. Dams are abandoned, wetlands drain, and water retention plummets. The landscape dries out further.',
-    spokenLine: 'Beavers are vanishing. Without willows to eat and build with, their dams collapse. Wetlands drain, and the whole landscape dries out.',
+    spokenLines: [
+      'Beavers are vanishing. Without willows to eat and build with, their dams collapse. Wetlands drain, and the whole landscape dries out.',
+      'No willows, no beavers. No beavers, no dams. No dams, no wetlands. The cascade keeps going deeper.',
+      'Yellowstone went from 9,000 beaver ponds to nearly zero when the willows disappeared. You are seeing that same collapse.',
+    ],
     concept: 'Ecosystem Engineering',
     conceptDetail: 'Beavers are the ultimate ecosystem engineers, creating wetlands that support fish, waterfowl, and vegetation.',
     historicalNote: 'Yellowstone had ~9,000 beaver ponds in 1800s, crashed to near zero by 1950s, now recovering toward ~4,000+.',
@@ -2083,7 +2326,11 @@ const INSIGHTS = [
     cooldown: 350,
     title: 'Beaver Engineering',
     narrative: 'Beavers are building dams again! Their construction creates wetlands, raises water tables, slows erosion, and provides habitat for fish, amphibians, and migratory birds. One beaver is worth thousands of engineers.',
-    spokenLine: 'Beavers are back at work building dams. Their wetlands raise water tables, slow erosion, and create habitat for dozens of other species. Nature is own best engineer.',
+    spokenLines: [
+      'Beavers are back at work building dams. Their wetlands raise water tables, slow erosion, and create habitat for dozens of other species. Nature is own best engineer.',
+      'One beaver family can transform an entire valley. Their dams create ponds that support fish, amphibians, waterfowl, and dozens of insect species.',
+      'Beaver engineering at its finest. These rodents reshape rivers more effectively than any human construction project.',
+    ],
     concept: 'Ecosystem Engineer',
     conceptDetail: 'Beavers modify their environment more dramatically than any species except humans.',
     historicalNote: 'Beaver ponds in restored Yellowstone create oases of biodiversity in otherwise dry landscapes.',
@@ -2095,7 +2342,11 @@ const INSIGHTS = [
     cooldown: 250,
     title: 'Nesting Habitat Loss',
     narrative: 'Songbirds are disappearing. Mature willows and aspens that provide nesting sites are gone. Ground-nesting birds suffer heavy predation from coyotes. Bird diversity plummets.',
-    spokenLine: 'Songbirds are disappearing. The mature trees they need for nesting are gone, and unchecked coyotes are picking off the ground-nesters.',
+    spokenLines: [
+      'Songbirds are disappearing. The mature trees they need for nesting are gone, and unchecked coyotes are picking off the ground-nesters.',
+      'Birds are an indicator species. When they decline, it means the whole ecosystem is stressed. No trees, no nests, no birds.',
+      'The silence is telling. In a healthy Yellowstone, you would hear dozens of bird species. When the trees go, the songs go with them.',
+    ],
     concept: 'Indicator Species',
     conceptDetail: 'Species whose presence or abundance reflects ecosystem health; used to monitor environmental conditions.',
     historicalNote: 'Yellowstone songbird diversity increased after wolves returned and willows regrew.',
@@ -2107,7 +2358,11 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Mesopredator Release',
     narrative: 'Without wolves to suppress them, coyotes boom explosively. They devastate ground-nesting songbirds and small mammals. This is called mesopredator release: mid-level predators run rampant without apex predator control.',
-    spokenLine: 'Coyotes are booming. This is mesopredator release. Without wolves keeping them in check, coyotes devastate songbirds and small mammals.',
+    spokenLines: [
+      'Coyotes are booming. This is mesopredator release. Without wolves keeping them in check, coyotes devastate songbirds and small mammals.',
+      'Mesopredator release in action. Remove the top predator and the mid-level ones explode. Coyotes are now the unchecked force in this ecosystem.',
+      'From 1926 to 1995, Yellowstone coyote populations ran rampant with no wolf control. Rabbits and ground-nesting birds paid the price.',
+    ],
     concept: 'Mesopredator Release',
     conceptDetail: 'When apex predators are removed, mid-level predators increase dramatically and overexploit prey.',
     historicalNote: 'Yellowstone coyote populations exploded 1926-1995; wolf return naturally suppressed coyote numbers.',
@@ -2119,7 +2374,11 @@ const INSIGHTS = [
     cooldown: 280,
     title: 'Secondary Cascade Effect',
     narrative: 'Rabbit populations have crashed—likely due to coyote overpredation. This cascades further: fewer rabbits means fewer predators survive, but also loss of food for other species.',
-    spokenLine: 'Rabbit populations have crashed, likely from coyote overpredation. The cascade keeps rippling further down the food web.',
+    spokenLines: [
+      'Rabbit populations have crashed, likely from coyote overpredation. The cascade keeps rippling further down the food web.',
+      'Another level of the food web has collapsed. Rabbits are victims of the same cascade that started with losing wolves.',
+      'Small mammals crashing. This is a secondary trophic effect — the consequences of removing wolves reach species three or four links down the chain.',
+    ],
     concept: 'Cascading Trophic Effects',
     conceptDetail: 'Changes in one species ripple through the food web, affecting multiple trophic levels.',
     historicalNote: 'Small mammal populations in Yellowstone showed strong recovery correlating with wolf presence.',
@@ -2131,7 +2390,11 @@ const INSIGHTS = [
     cooldown: 250,
     title: 'Aquatic Habitat Degradation',
     narrative: 'Fish populations are in freefall. Causes: rising water temperature from lack of riparian shade, erosion-caused siltation, poor water quality, and unstable stream structure. Fish are sentinel species for river health.',
-    spokenLine: 'Fish are dying off. Warmer water, eroded banks, and silted streams are destroying their habitat. Fish are the canary in the coal mine for river health.',
+    spokenLines: [
+      'Fish are dying off. Warmer water, eroded banks, and silted streams are destroying their habitat. Fish are the canary in the coal mine for river health.',
+      'The aquatic ecosystem is collapsing. Without shade from willows, water temperatures rise and dissolved oxygen drops. Fish cannot survive this.',
+      'Yellowstone cutthroat trout nearly vanished when the riparian zone collapsed. They only recovered after wolves brought the willows back.',
+    ],
     concept: 'Indicator Species',
     conceptDetail: 'Fish health directly reflects water quality, temperature stability, and habitat complexity.',
     historicalNote: 'Yellowstone cutthroat trout recovered after willows regrew, providing shade and cooler water.',
@@ -2143,7 +2406,11 @@ const INSIGHTS = [
     cooldown: 300,
     title: 'Historical Extirpation Campaign',
     narrative: 'Heavy hunting is eliminating wolves rapidly. This mirrors the 1914-1926 extirpation campaign when the U.S. government systematically killed every wolf in Yellowstone to protect livestock.',
-    spokenLine: 'Heavy hunting is wiping out the wolves. This mirrors exactly what happened in 1914 to 1926, when the U.S. government exterminated every wolf in Yellowstone.',
+    spokenLines: [
+      'Heavy hunting is wiping out the wolves. This mirrors exactly what happened in 1914 to 1926, when the U.S. government exterminated every wolf in Yellowstone.',
+      'Systematic wolf extermination. The government thought killing predators would help the park. Instead, it triggered the worst ecological crisis in Yellowstone history.',
+      'Hunters are overwhelming the wolves. The last Yellowstone wolf was killed in 1926. It took 69 years before anyone tried to bring them back.',
+    ],
     concept: 'Human-Driven Extinction',
     conceptDetail: 'Species can be driven to extinction or near-extinction through deliberate human hunting.',
     historicalNote: 'Last Yellowstone wolf was killed in 1926; reintroduction took 69 years to achieve in 1995.',
@@ -2155,7 +2422,11 @@ const INSIGHTS = [
     cooldown: 500,
     title: 'Ecosystem Restoration Success',
     narrative: 'Your ecosystem has recovered! Wolves control elk, vegetation thrives, rivers stabilize, beavers engineer wetlands, and fish and birds return. This mirrors Yellowstone\'s real recovery from 1995 onward.',
-    spokenLine: 'The ecosystem has recovered. Wolves control elk, vegetation thrives, rivers run clear, and beavers are engineering wetlands again. This is what Yellowstone looks like today.',
+    spokenLines: [
+      'The ecosystem has recovered. Wolves control elk, vegetation thrives, rivers run clear, and beavers are engineering wetlands again. This is what Yellowstone looks like today.',
+      'Ecosystem restoration success. Every link in the food chain is working. This is what balance looks like — and it all started with bringing back the wolves.',
+      'You have recreated one of ecology is greatest success stories. The Yellowstone trophic cascade recovery proves that nature can heal when we give it the right tools.',
+    ],
     concept: 'Ecological Restoration',
     conceptDetail: 'Active intervention to restore degraded ecosystems to functional, healthy states.',
     historicalNote: 'Yellowstone\'s trophic cascade recovery is considered one of ecology\'s great success stories.',
@@ -2167,10 +2438,165 @@ const INSIGHTS = [
     cooldown: 400,
     title: '1995 Reintroduction',
     narrative: 'Wolves have returned to a degraded ecosystem. In real Yellowstone, 14 wolves from Canada were released in 1995-96. Their presence triggered ecosystem-wide recovery over the following decades.',
-    spokenLine: 'Wolves are back in a damaged landscape. In 1995, just 14 Canadian wolves were released into Yellowstone. What followed was one of ecology is greatest recovery stories.',
+    spokenLines: [
+      'Wolves are back in a damaged landscape. In 1995, just 14 Canadian wolves were released into Yellowstone. What followed was one of ecology is greatest recovery stories.',
+      'Reintroduction into a degraded ecosystem. The wolves have their work cut out for them. But if history is any guide, their presence alone will start turning things around.',
+      'Fourteen wolves changed everything. They were dropped into a broken Yellowstone and triggered a cascade of recovery that scientists are still studying today.',
+    ],
     concept: 'Keystone Species Reintroduction',
     conceptDetail: 'Restoring a keystone species can initiate cascading recovery throughout a damaged ecosystem.',
     historicalNote: 'The 1995 reintroduction was controversial but became a textbook example of successful restoration.',
+    severity: 'info'
+  },
+
+  // ─── BEAR INSIGHTS ──────────────────────────────────────────────────
+  {
+    id: 'bear_thriving',
+    condition: (s) => s.bears >= 5 && s.bears <= 10 && s.riverHealth > 50 && s.vegetationHealth > 50,
+    cooldown: 400,
+    title: 'Grizzly Bears Thriving',
+    narrative: 'Grizzly bears are doing well. They are fishing in healthy rivers and foraging berries from recovering vegetation. Bears are a sign of a truly healthy, complete ecosystem.',
+    spokenLines: [
+      'Grizzly bears are thriving. Healthy rivers for fishing, abundant berries from recovering vegetation. This is a complete ecosystem.',
+      'Bears are an iconic Yellowstone species. When they are doing well, it means both the aquatic and terrestrial food webs are functioning.',
+      'The grizzlies are finding everything they need — fish, berries, space. A bear-friendly landscape is a healthy landscape.',
+    ],
+    concept: 'Umbrella Species',
+    conceptDetail: 'Protecting habitat for wide-ranging species like grizzly bears also protects many other species that share the same habitat.',
+    historicalNote: 'Yellowstone grizzly populations recovered from ~136 in 1975 to over 700 today, closely tied to ecosystem health.',
+    severity: 'info'
+  },
+  {
+    id: 'bear_starving',
+    condition: (s) => s.bears > 0 && s.bears < 3 && (s.riverHealth < 40 || s.vegetationHealth < 30),
+    cooldown: 300,
+    title: 'Grizzly Bears Struggling',
+    narrative: 'Grizzly bears are disappearing. Without healthy rivers for fish or vegetation for berries, they cannot sustain themselves. Bears need a functioning ecosystem to survive.',
+    spokenLines: [
+      'The grizzlies are starving. No fish in degraded rivers, no berries without vegetation. They need a complete ecosystem to survive.',
+      'Bears are struggling because both their food sources are failing. This is what happens when the whole web breaks down.',
+      'Grizzly bear decline is a red flag. It means neither the rivers nor the forests are healthy enough to support large omnivores.',
+    ],
+    concept: 'Trophic Omnivory',
+    conceptDetail: 'Omnivores like bears feed at multiple trophic levels. Their decline signals widespread ecosystem failure across multiple food chains.',
+    historicalNote: 'Yellowstone grizzlies were nearly lost when whitebark pine and cutthroat trout — key food sources — declined simultaneously.',
+    severity: 'warning'
+  },
+
+  // ─── PLAYER GUIDANCE INSIGHTS ───────────────────────────────────────
+  {
+    id: 'guide_add_wolves',
+    condition: (s) => s.wolves < 5 && s.elk > 50 && s.vegetationHealth < 60,
+    cooldown: 200,
+    title: 'Strategy: Add Wolves',
+    narrative: 'The ecosystem needs its apex predator. Adding wolves will control elk, reduce overgrazing, and start the cascade of recovery.',
+    spokenLines: [
+      'This ecosystem is crying out for wolves. The elk are out of control and vegetation is suffering. Try adding some wolves.',
+      'Here is a strategy tip: wolves are the key to everything. Add a few and watch how they change elk behavior almost immediately.',
+      'The system needs top-down pressure. Add wolves to bring elk under control and let the vegetation start recovering.',
+    ],
+    concept: 'Top-Down Regulation',
+    conceptDetail: 'Apex predators regulate entire ecosystems from the top of the food chain down.',
+    historicalNote: 'The decision to reintroduce wolves was the single most impactful conservation action in Yellowstone history.',
+    severity: 'info'
+  },
+  {
+    id: 'guide_patience_trees',
+    condition: (s) => s.wolves >= 8 && s.elk <= 50 && s.vegetationHealth < 50,
+    cooldown: 350,
+    title: 'Recovery Takes Time',
+    narrative: 'Wolves are controlling elk, but vegetation recovery is slow. Trees need time to grow. Consider adding some trees to accelerate the process.',
+    spokenLines: [
+      'Good news — wolves are keeping elk in check. But trees grow slowly. Consider planting some to speed up recovery.',
+      'The predator-prey balance is improving, but vegetation lags behind. In real Yellowstone, willow recovery took over a decade.',
+      'You have the wolves in place. Now the ecosystem needs time — or a little help. Try adding trees near the river.',
+    ],
+    concept: 'Recovery Time Lag',
+    conceptDetail: 'Ecosystem recovery often lags behind the intervention that triggers it, especially for slow-growing species like trees.',
+    historicalNote: 'Yellowstone aspen showed significant recovery only 10-15 years after wolf reintroduction.',
+    severity: 'info'
+  },
+  {
+    id: 'guide_river_help',
+    condition: (s) => s.riverHealth < 40 && s.beavers < 4 && s.vegetationHealth > 35,
+    cooldown: 280,
+    title: 'Strategy: Beaver Power',
+    narrative: 'Rivers are struggling. Beavers are nature\'s water engineers — their dams create wetlands, slow erosion, and raise water tables. The vegetation is recovering enough to support them.',
+    spokenLines: [
+      'The river needs help. Try adding beavers. Their dams create ponds that raise water tables and support fish.',
+      'Vegetation is starting to recover, which means beavers can now find the willows they need for dam building. Add some beavers to boost river health.',
+      'Beavers are the missing piece for river recovery. One beaver family can transform an entire stretch of waterway.',
+    ],
+    concept: 'Beaver Dam Ecology',
+    conceptDetail: 'Beaver dams create complex wetland habitats that slow water flow, trap sediment, and support biodiversity.',
+    historicalNote: 'Yellowstone beaver populations recovered naturally after willows regrew, but strategic reintroduction accelerated the process.',
+    severity: 'info'
+  },
+  {
+    id: 'guide_balance_close',
+    condition: (s) => {
+      const sc = (clamp(s.wolves / 15, 0, 1) * 15) + ((1 - Math.abs(s.elk - 38) / 38) * 15) + (clamp(s.trees / 85, 0, 1) * 20);
+      return sc > 30 && sc < 50;
+    },
+    cooldown: 300,
+    title: 'Getting Closer',
+    narrative: 'The ecosystem is starting to find its rhythm. Key relationships are forming. Keep managing populations carefully — you\'re on the right track.',
+    spokenLines: [
+      'The ecosystem is starting to stabilize. Keep going — you are heading in the right direction.',
+      'I can see the food web connections strengthening. Maintain this trajectory and balance will follow.',
+      'Progress. The relationships between species are starting to work. Stay the course and watch the score climb.',
+    ],
+    concept: 'Ecosystem Resilience',
+    conceptDetail: 'Healthy ecosystems develop redundant connections that make them resistant to disturbance.',
+    historicalNote: 'Yellowstone scientists tracked dozens of ecosystem health indicators over decades to measure recovery progress.',
+    severity: 'info'
+  },
+  {
+    id: 'guide_overadding',
+    condition: (s) => s.wolves > 25 && s.elk < 20,
+    cooldown: 250,
+    title: 'Too Many Predators',
+    narrative: 'You have added too many wolves for the available prey. The elk population is crashing. In nature, wolf packs would disperse or die off — balance requires restraint.',
+    spokenLines: [
+      'Careful — too many wolves and not enough elk. The predators are overpowering the system. Nature needs balance, not dominance.',
+      'The wolf population has overshot. There are not enough elk to sustain them. Try letting the system self-correct.',
+      'This is a common mistake. More wolves does not always mean better. The ecosystem needs the right ratio, not just more predators.',
+    ],
+    concept: 'Lotka-Volterra Dynamics',
+    conceptDetail: 'Predator-prey cycles follow mathematical patterns where both populations oscillate. Adding too many predators crashes the cycle.',
+    historicalNote: 'Yellowstone wolf packs naturally limit their size through territorial competition — typically 6-10 per pack.',
+    severity: 'warning'
+  },
+  {
+    id: 'guide_elk_no_wolves',
+    condition: (s) => s.wolves === 0 && s.elk > 30 && s.elk < 50,
+    cooldown: 250,
+    title: 'Elk Without Predators',
+    narrative: 'Elk populations are moderate now, but without wolves they will grow explosively. This is the calm before the storm — act quickly to introduce predators.',
+    spokenLines: [
+      'The elk numbers look manageable now, but without wolves this will not last. They will double and triple unchecked.',
+      'Do not be fooled by the current elk count. Without wolf predation, exponential growth is coming. Introduce wolves now while you still can.',
+      'This quiet period is temporary. Elk breed rapidly without fear of predators. The overgrazing crisis is just a few generations away.',
+    ],
+    concept: 'Exponential Growth',
+    conceptDetail: 'Without predation, herbivore populations grow exponentially until they crash by exceeding carrying capacity.',
+    historicalNote: 'Yellowstone elk went from manageable numbers to 25,000 in just two decades after wolf removal.',
+    severity: 'warning'
+  },
+  {
+    id: 'guide_thriving',
+    condition: (s) => s.vegetationHealth > 70 && s.riverHealth > 60 && s.wolves >= 8 && s.wolves <= 20 && s.beavers >= 4,
+    cooldown: 500,
+    title: 'Ecosystem Thriving',
+    narrative: 'The ecosystem is in excellent shape. All the key connections are working: wolves regulate elk, trees stabilize rivers, beavers engineer wetlands. This is what a healthy Yellowstone looks like.',
+    spokenLines: [
+      'Beautiful. The ecosystem is thriving. Every link in the food chain is doing its job. This is what Yellowstone was meant to look like.',
+      'You have achieved something remarkable. Wolves, elk, trees, beavers, fish, birds — all in harmony. Hold this balance.',
+      'This is the Yellowstone that exists today thanks to wolf reintroduction. You are looking at one of nature is great success stories.',
+    ],
+    concept: 'Climax Community',
+    conceptDetail: 'A stable ecosystem where species composition remains relatively constant — the end-point of ecological succession.',
+    historicalNote: 'Modern Yellowstone is considered one of the most successful large-scale ecosystem restorations in history.',
     severity: 'info'
   }
 ];
@@ -2190,6 +2616,7 @@ function FoodWebDiagram({ stats }) {
     { id: 'bird', label: '🐦', x: 90, y: 30, pop: stats.birds, ideal: 15 },
     { id: 'coyote', label: '🐾', x: 190, y: 30, pop: stats.coyotes, ideal: 10 },
     { id: 'rabbit', label: '🐰', x: 150, y: 80, pop: stats.rabbits, ideal: 25 },
+    { id: 'bear', label: '🐻', x: 55, y: 30, pop: stats.bears, ideal: 6 },
   ];
 
   const getHealth = (pop, ideal) => {
@@ -2215,6 +2642,8 @@ function FoodWebDiagram({ stats }) {
     { from: 'beaver', to: 'river' },
     { from: 'river', to: 'fish' },
     { from: 'coyote', to: 'rabbit' },
+    { from: 'bear', to: 'fish' },
+    { from: 'bear', to: 'veg' },
   ];
 
   return (
@@ -2253,6 +2682,7 @@ const SPECIES = [
   { type: FISH, icon: "🐟", label: "Fish", key: "fish", color: "#67e8f9", desc: "Need cool, shaded, stable water." },
   { type: BIRD, icon: "🐦", label: "Songbirds", key: "birds", color: "#fbbf24", desc: "Need mature trees for nesting." },
   { type: RABBIT, icon: "🐰", label: "Rabbits", key: "rabbits", color: "#d1d5db", desc: "Prey for coyotes. Population indicator." },
+  { type: BEAR, icon: "🐻", label: "Grizzlies", key: "bears", color: "#92400e", desc: "Omnivore. Fishes, forages berries, competes with wolves." },
 ];
 
 // Locked species shown as info-only in panel
@@ -2275,12 +2705,11 @@ export default function Simulation() {
   const insightCounterRef = useRef({});
   const [canvasSize, setCanvasSize] = useState({ w: 1280, h: 720 });
   const [running, setRunning] = useState(false);
-  const [stats, setStats] = useState({ wolves: 12, elk: 45, trees: 90, beavers: 8, coyotes: 10, fish: 22, birds: 15, rabbits: 28, hunters: 0, vegetationHealth: 85, riverHealth: 90 });
+  const [stats, setStats] = useState({ wolves: 12, elk: 45, trees: 90, beavers: 8, coyotes: 10, fish: 22, birds: 15, rabbits: 28, bears: 6, hunters: 0, vegetationHealth: 85, riverHealth: 90 });
   const [history, setHistory] = useState([]);
   const [score, setScore] = useState(75);
   const [alerts, setAlerts] = useState([]);
   const [selectedTool, setSelectedTool] = useState(WOLF);
-  const [toolMode, setToolMode] = useState("add");
   const [chartTab, setChartTab] = useState("predprey");
   const [showHelp, setShowHelp] = useState(true);
   const [showChart, setShowChart] = useState(false);
@@ -2296,6 +2725,16 @@ export default function Simulation() {
   const [currentInsight, setCurrentInsight] = useState(null);
   const [insightLog, setInsightLog] = useState([]);
   const [insightTimer, setInsightTimer] = useState(0);
+
+  // Game state — victory/loss
+  const [gameTimer, setGameTimer] = useState(0); // ticks elapsed
+  const [gameState, setGameState] = useState("ready"); // ready | playing | won | lost
+  const [healthyStreak, setHealthyStreak] = useState(0); // consecutive ticks in "healthy" zone
+  const GAME_DURATION = 18000; // ~5 min at 60fps (300 seconds)
+  const WIN_THRESHOLD = 75; // balance score needed
+  const WIN_STREAK_NEEDED = 1200; // must hold healthy for 20 seconds (1200 frames)
+  const gameTimerRef = useRef(0);
+  const healthyStreakRef = useRef(0);
 
   // Responsive canvas sizing with ResizeObserver
   useEffect(() => {
@@ -2343,6 +2782,33 @@ export default function Simulation() {
     const newAlerts = getCascadeAlerts(eco.stats);
     setAlerts(newAlerts);
 
+    // Game timer and win/loss logic
+    if (gameState === "playing") {
+      gameTimerRef.current += speed;
+      if (gameTimerRef.current % 60 === 0) setGameTimer(gameTimerRef.current);
+
+      // Track healthy streak
+      if (eco.balanceScore >= WIN_THRESHOLD) {
+        healthyStreakRef.current += speed;
+      } else {
+        healthyStreakRef.current = 0;
+      }
+      if (healthyStreakRef.current % 60 === 0) setHealthyStreak(healthyStreakRef.current);
+
+      // Win condition: held healthy for required streak
+      if (healthyStreakRef.current >= WIN_STREAK_NEEDED) {
+        setGameState("won");
+        setRunning(false);
+        setHealthyStreak(healthyStreakRef.current);
+      }
+      // Loss condition: time ran out
+      else if (gameTimerRef.current >= GAME_DURATION) {
+        setGameState("lost");
+        setRunning(false);
+        setGameTimer(gameTimerRef.current);
+      }
+    }
+
     // Update soundscape every 60 ticks
     if (audioInit && eco.tick % 60 === 0) {
       soundscape.update(eco.stats, newAlerts);
@@ -2358,11 +2824,12 @@ export default function Simulation() {
           setInsightTimer(12 * 60); // 12 seconds at 60 fps
           setInsightLog(prev => [insight, ...prev.slice(0, 7)]);
           insightCounterRef.current[insight.id] = 0;
-          // Speak the insight via narrator
-          if (narratorEnabled && insight.spokenLine) {
-            narrator.speak(insight.id, insight.spokenLine);
+          // Speak the insight via narrator (random line from pool)
+          if (narratorEnabled && insight.spokenLines && insight.spokenLines.length > 0) {
+            const line = insight.spokenLines[Math.floor(Math.random() * insight.spokenLines.length)];
+            narrator.speak(insight.id, line);
             setNarratorActive(true);
-            setSpokenSubtitle(insight.spokenLine);
+            setSpokenSubtitle(line);
             setTimeout(() => { setNarratorActive(false); setSpokenSubtitle(null); }, 10000);
           }
           break;
@@ -2387,18 +2854,8 @@ export default function Simulation() {
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
-    if (toolMode === "add") {
-      eco.entities.push(createEntity(selectedTool, x, y, eco.W, eco.H));
-    } else {
-      let bestI = -1, bestD = 35;
-      for (let i = 0; i < eco.entities.length; i++) {
-        const ent = eco.entities[i];
-        if (ent.type !== selectedTool || !ent.alive) continue;
-        const d = dist({ x, y }, ent);
-        if (d < bestD) { bestD = d; bestI = i; }
-      }
-      if (bestI >= 0) eco.entities[bestI].alive = false;
-    }
+    eco.entities.push(createEntity(selectedTool, x, y, eco.W, eco.H));
+    eco.particles.push({ type: "birth", x, y, color: "#60a5fa", icon: SPECIES.find(s => s.type === selectedTool)?.icon || "✨", age: 0, maxAge: 60 });
 
     if (!running) {
       const ctx = canvasRef.current.getContext("2d");
@@ -2420,6 +2877,7 @@ export default function Simulation() {
       fish: eco.entities.filter(e => e.type === FISH && e.alive).length,
       birds: eco.entities.filter(e => e.type === BIRD && e.alive).length,
       rabbits: eco.entities.filter(e => e.type === RABBIT && e.alive).length,
+      bears: eco.entities.filter(e => e.type === BEAR && e.alive).length,
       hunters: eco.entities.filter(e => e.type === HUNTER && e.alive).length,
       vegetationHealth: Math.round(eco.vegetationHealth),
       riverHealth: Math.round(eco.riverHealth),
@@ -2438,8 +2896,25 @@ export default function Simulation() {
     setHistory([]);
     setScore(75);
     setAlerts([]);
+    setGameState("ready");
+    setGameTimer(0);
+    setHealthyStreak(0);
+    gameTimerRef.current = 0;
+    healthyStreakRef.current = 0;
     const ctx = canvasRef.current?.getContext("2d");
     if (ctx) { ctx.clearRect(0, 0, eco.W, eco.H); renderEcosystem(ctx, eco); }
+  };
+
+  const handleStartGame = () => {
+    if (gameState === "won" || gameState === "lost") {
+      handleReset();
+    }
+    setGameState("playing");
+    gameTimerRef.current = 0;
+    healthyStreakRef.current = 0;
+    setGameTimer(0);
+    setHealthyStreak(0);
+    setRunning(true);
   };
 
   const handlePreset = (preset) => {
@@ -2542,10 +3017,37 @@ export default function Simulation() {
           <span style={{ fontSize: 10, color: getScoreColor(score), fontWeight: 600 }}>{getScoreLabel(score)}</span>
         </div>
 
+        {/* Game timer */}
+        {gameState === "playing" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#1e293b", borderRadius: 6, padding: "3px 10px" }}>
+            <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>TIME</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: gameTimerRef.current > GAME_DURATION * 0.8 ? "#ef4444" : "#e2e8f0", fontVariantNumeric: "tabular-nums" }}>
+              {Math.max(0, Math.ceil((GAME_DURATION - gameTimerRef.current) / 60))}s
+            </span>
+            <div style={{ width: 50, height: 5, background: "#334155", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${Math.max(0, (1 - gameTimerRef.current / GAME_DURATION)) * 100}%`, background: gameTimerRef.current > GAME_DURATION * 0.8 ? "#ef4444" : "#60a5fa", borderRadius: 3, transition: "width 0.3s" }} />
+            </div>
+            {score >= WIN_THRESHOLD && (
+              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                <span style={{ fontSize: 10, color: "#22c55e", fontWeight: 700 }}>✓ HOLDING</span>
+                <div style={{ width: 40, height: 5, background: "#334155", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${Math.min(100, (healthyStreakRef.current / WIN_STREAK_NEEDED) * 100)}%`, background: "#22c55e", borderRadius: 3 }} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Sim controls */}
-        <button onClick={() => setRunning(!running)} style={S.btnSolid(running ? "#dc2626" : "#16a34a")}>
-          {running ? "⏸ Pause" : "▶ Run"}
-        </button>
+        {gameState === "ready" ? (
+          <button onClick={handleStartGame} style={S.btnSolid("#16a34a")}>▶ Start Challenge</button>
+        ) : gameState === "playing" ? (
+          <button onClick={() => setRunning(!running)} style={S.btnSolid(running ? "#dc2626" : "#16a34a")}>
+            {running ? "⏸ Pause" : "▶ Resume"}
+          </button>
+        ) : (
+          <button onClick={handleStartGame} style={S.btnSolid("#3b82f6")}>🔄 New Challenge</button>
+        )}
         <button onClick={handleReset} style={S.btn(false, "#64748b")}>Reset</button>
 
         <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
@@ -2587,17 +3089,9 @@ export default function Simulation() {
 
           {!panelCollapsed && (
             <>
-              {/* Mode toggle */}
-              <div style={{ display: "flex", margin: "0 8px 6px", borderRadius: 6, overflow: "hidden", border: "1px solid #334155" }}>
-                {["add", "remove"].map(mode => (
-                  <button key={mode} onClick={() => setToolMode(mode)} style={{
-                    flex: 1, padding: "5px 0", border: "none", fontSize: 11, fontWeight: 700, cursor: "pointer",
-                    background: toolMode === mode ? (mode === "add" ? "#166534" : "#991b1b") : "#1e293b",
-                    color: toolMode === mode ? "#fff" : "#64748b",
-                  }}>
-                    {mode === "add" ? "+ Add" : "- Remove"}
-                  </button>
-                ))}
+              {/* Add mode label */}
+              <div style={{ padding: "5px 8px", margin: "0 8px 6px", borderRadius: 6, background: "#166534", textAlign: "center", fontSize: 11, fontWeight: 700, color: "#86efac" }}>
+                + Click to Add Species
               </div>
 
               {/* Species buttons */}
@@ -2669,12 +3163,12 @@ export default function Simulation() {
             width={canvasSize.w}
             height={canvasSize.h}
             onClick={handleCanvasClick}
-            style={{ display: "block", cursor: toolMode === "add" ? "crosshair" : "pointer", imageRendering: "crisp-edges" }}
+            style={{ display: "block", cursor: "crosshair", imageRendering: "crisp-edges" }}
           />
 
           {/* Tool cursor label */}
           <div style={{ position: "absolute", top: 8, left: 8, background: "rgba(15,23,42,0.88)", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#94a3b8", pointerEvents: "none", border: "1px solid #334155" }}>
-            {toolMode === "add" ? "+" : "-"} {selectedInfo?.icon} {selectedInfo?.label}
+            + {selectedInfo?.icon} {selectedInfo?.label}
           </div>
 
           {/* Alerts overlay */}
@@ -2828,6 +3322,57 @@ export default function Simulation() {
         </div>
       </div>
 
+      {/* ═══ VICTORY MODAL ═══ */}
+      {gameState === "won" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div style={{ background: "linear-gradient(135deg, #0f2a1a, #1e293b)", borderRadius: 16, padding: 32, maxWidth: 500, margin: 20, border: "2px solid #22c55e", textAlign: "center" }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>🐺🌲🏔️</div>
+            <h2 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 8px", color: "#86efac" }}>Ecosystem Restored!</h2>
+            <p style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.6, margin: "0 0 16px" }}>
+              You achieved a balanced ecosystem and held it stable. Wolves are controlling elk, vegetation is thriving, rivers are healthy, and the entire food web is functioning.
+            </p>
+            <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 16px", padding: "10px 14px", background: "#0f172a", borderRadius: 8, lineHeight: 1.5 }}>
+              <strong style={{ color: "#60a5fa" }}>In real Yellowstone:</strong> This recovery took from 1995 to roughly 2010 — about 15 years. You did it in {Math.floor(gameTimerRef.current / 60)} seconds of simulation time!
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+              <button onClick={handleStartGame} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                Play Again
+              </button>
+              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+                Free Play
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ LOSS MODAL ═══ */}
+      {gameState === "lost" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div style={{ background: "linear-gradient(135deg, #2a0f0f, #1e293b)", borderRadius: 16, padding: 32, maxWidth: 500, margin: 20, border: "2px solid #ef4444", textAlign: "center" }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>💀🏜️</div>
+            <h2 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 8px", color: "#fca5a5" }}>Ecosystem Collapsed</h2>
+            <p style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.6, margin: "0 0 16px" }}>
+              Time ran out before you could stabilize the ecosystem. The balance score needed to reach {WIN_THRESHOLD} and hold for {Math.round(WIN_STREAK_NEEDED / 60)} seconds.
+            </p>
+            <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 8px", lineHeight: 1.5 }}>
+              <strong>Your final score:</strong> <span style={{ color: getScoreColor(score), fontWeight: 700, fontSize: 16 }}>{score}</span>
+            </p>
+            <p style={{ fontSize: 11, color: "#64748b", margin: "0 0 16px", padding: "8px 12px", background: "#0f172a", borderRadius: 8 }}>
+              <strong style={{ color: "#eab308" }}>Hint:</strong> {score < 40 ? "Try adding wolves early — they control elk and trigger the whole cascade of recovery." : score < 60 ? "You're on the right track. Focus on getting wolves and elk balanced first, then let vegetation recover." : "So close! Once the balance score hits " + WIN_THRESHOLD + ", you need to hold it steady. Avoid adding too many of any one species."}
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+              <button onClick={handleStartGame} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #dc2626, #ea580c)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                Try Again
+              </button>
+              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+                Free Play
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═══ HELP MODAL ═══ */}
       {showHelp && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setShowHelp(false)}>
@@ -2836,10 +3381,10 @@ export default function Simulation() {
               Yellowstone Trophic Cascade
             </h2>
             <div style={{ fontSize: 13, lineHeight: 1.7, color: "#cbd5e1" }}>
-              <p style={{ margin: "0 0 10px" }}><strong>Your goal:</strong> Achieve ecosystem balance (score 85+) by managing species populations.</p>
-              <p style={{ margin: "0 0 10px" }}><strong>Select a species</strong> from the left panel, choose <strong>Add</strong> or <strong>Remove</strong>, then <strong>click the ecosystem</strong> to place or remove them.</p>
-              <p style={{ margin: "0 0 10px" }}><strong>Hit Run</strong> and watch the cascade unfold. Wolves hunt elk, elk graze trees, trees stabilize rivers, rivers support fish and beavers. Remove wolves and the whole system unravels.</p>
-              <p style={{ margin: "0 0 10px" }}><strong>Try the scenarios</strong> to see historical events play out, then experiment with your own interventions.</p>
+              <p style={{ margin: "0 0 10px" }}><strong>The Challenge:</strong> Restore Yellowstone's ecosystem to balance (score {WIN_THRESHOLD}+) and hold it there for {Math.round(WIN_STREAK_NEEDED / 60)} seconds — all within {Math.round(GAME_DURATION / 60)} seconds.</p>
+              <p style={{ margin: "0 0 10px" }}><strong>Select a species</strong> from the left panel and <strong>click the ecosystem</strong> to add them. Each species you introduce ripples through the entire food web.</p>
+              <p style={{ margin: "0 0 10px" }}><strong>Hit Start Challenge</strong> and watch the cascade unfold. Wolves hunt elk, elk graze trees, trees stabilize rivers, rivers support fish and beavers.</p>
+              <p style={{ margin: "0 0 10px" }}><strong>Hunters appear automatically</strong> based on wolf population — just like real history. Try the scenarios to see different starting conditions.</p>
               <p style={{ margin: "0 0 8px", padding: "8px 12px", background: "#0f172a", borderRadius: 8, fontSize: 12 }}>
                 <strong style={{ color: "#60a5fa" }}>The Cascade:</strong> Wolves → Elk → Vegetation → Rivers → Beavers/Fish/Songbirds
                 <br />
