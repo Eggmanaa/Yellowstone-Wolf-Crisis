@@ -422,219 +422,285 @@ function renderEcosystem(ctx, eco) {
   const vf = vh / 100;
   const RX = W * TERRAIN.riverPct;
   const MX = W * TERRAIN.mountainStartPct;
+  const scaledRW = rw * (W / 960);  // scale river width to canvas
 
-  // ─── Background: sky gradient ─────────────────────────────────────────
-  const skyGrad = ctx.createLinearGradient(0, 0, 0, H * 0.4);
-  skyGrad.addColorStop(0, "#0a1428");
-  skyGrad.addColorStop(0.5, "#142a52");
-  skyGrad.addColorStop(1, "transparent");
-  ctx.fillStyle = skyGrad;
-  ctx.fillRect(0, 0, W, H);
+  // ─── FULL TERRAIN BASE (entire canvas is ground — top-down view) ──────
+  // Meadow covers left side, forest covers right of river, mountains far right
+  const meadowBase = lerpColor("#3d6b2e", "#5a9a40", vf);
+  const meadowDark = lerpColor("#2a4a1e", "#3d7a2e", vf);
+  const meadowLight = lerpColor("#4a7a36", "#6ab54a", vf);
 
-  // Base sky
-  ctx.fillStyle = "#0f1d38";
-  ctx.fillRect(0, 0, W, H);
+  // Fill entire canvas with base meadow gradient
+  const baseGrad = ctx.createLinearGradient(0, 0, 0, H);
+  baseGrad.addColorStop(0, lerpColor("#2e5420", "#4a8a35", vf));
+  baseGrad.addColorStop(0.3, meadowBase);
+  baseGrad.addColorStop(0.7, lerpColor("#355e28", "#4e9038", vf));
+  baseGrad.addColorStop(1, lerpColor("#2a4a1e", "#3d7030", vf));
+  ctx.fillStyle = baseGrad;
+  ctx.fillRect(0, 0, RX - scaledRW / 2, H);
 
-  // ─── Atmospheric ambient light gradient ───────────────────────────────
-  const ambGrad = ctx.createLinearGradient(0, 0, W, H);
-  ambGrad.addColorStop(0, `rgba(96, 165, 250, ${0.05 * vf})`);
-  ambGrad.addColorStop(1, `rgba(139, 92, 246, ${0.03 * vf})`);
-  ctx.fillStyle = ambGrad;
-  ctx.fillRect(0, 0, W, H);
+  // Forest side — slightly darker, bluer green
+  const forestBase = lerpColor("#1e3a1a", "#2d5a28", vf);
+  const forestGrad = ctx.createLinearGradient(RX + scaledRW / 2, 0, MX, 0);
+  forestGrad.addColorStop(0, lerpColor("#1e4a22", "#2d6a30", vf));
+  forestGrad.addColorStop(1, lerpColor("#1a3518", "#265a24", vf));
+  ctx.fillStyle = forestGrad;
+  ctx.fillRect(RX + scaledRW / 2, 0, MX - RX - scaledRW / 2, H);
 
-  // ─── Mountain range with snow detail ──────────────────────────────────
-  ctx.fillStyle = "#0f1d38";
-  ctx.beginPath();
-  ctx.moveTo(MX, H);
-  for (let x = MX; x <= W; x += 2) {
-    const pct = (x - MX) / (W - MX);
-    const peak = H * 0.12 + Math.sin(pct * 5 + 0.8) * H * 0.14 + Math.sin(pct * 11.3) * H * 0.05 + Math.sin(pct * 23) * H * 0.02;
-    ctx.lineTo(x, peak);
-  }
-  ctx.lineTo(W, H);
-  ctx.closePath();
-  ctx.fill();
+  // ─── Perlin noise terrain texture (FULL canvas, visible) ──────────────
+  // Meadow noise — creates patches of lighter/darker grass, dirt
+  const noiseStep = 6;
+  for (let x = 0; x < RX - scaledRW / 2; x += noiseStep) {
+    for (let y = 0; y < H; y += noiseStep) {
+      const nv = noise2d(x, y, 60);
+      const nv2 = noise2d(x + 500, y + 300, 30); // second octave for detail
+      const combined = nv * 0.7 + nv2 * 0.3;
 
-  // Snow caps with detail
-  ctx.fillStyle = "rgba(226, 232, 240, 0.4)";
-  ctx.beginPath();
-  ctx.moveTo(MX, H);
-  for (let x = MX; x <= W; x += 2) {
-    const pct = (x - MX) / (W - MX);
-    const peak = H * 0.12 + Math.sin(pct * 5 + 0.8) * H * 0.14 + Math.sin(pct * 11.3) * H * 0.05 + Math.sin(pct * 23) * H * 0.02;
-    ctx.lineTo(x, peak);
-  }
-  for (let x = W; x >= MX; x -= 2) {
-    const pct = (x - MX) / (W - MX);
-    const peak = H * 0.12 + Math.sin(pct * 5 + 0.8) * H * 0.14 + Math.sin(pct * 11.3) * H * 0.05 + Math.sin(pct * 23) * H * 0.02;
-    ctx.lineTo(x, peak + H * 0.06);
-  }
-  ctx.closePath();
-  ctx.fill();
-
-  // ─── Mountain rock shading ───────────────────────────────────────────
-  ctx.strokeStyle = "rgba(30, 41, 59, 0.6)";
-  ctx.lineWidth = 0.8;
-  for (let x = MX; x <= W; x += 8) {
-    const pct = (x - MX) / (W - MX);
-    const peak = H * 0.12 + Math.sin(pct * 5 + 0.8) * H * 0.14 + Math.sin(pct * 11.3) * H * 0.05 + Math.sin(pct * 23) * H * 0.02;
-    const slopeH = H * 0.08;
-    ctx.beginPath();
-    ctx.moveTo(x, peak);
-    ctx.lineTo(x + 12, peak + slopeH);
-    ctx.stroke();
-  }
-
-  // ─── Ground — meadow with Perlin noise texture ────────────────────────
-  const meadowColor = lerpColor("#1a2e1a", "#2d5a2e", vf);
-  const meadowGrad = ctx.createRadialGradient(W * 0.25, H * 0.5, 0, W * 0.25, H * 0.5, W * 0.4);
-  meadowGrad.addColorStop(0, lerpColor("#1a3a1a", "#3a7a3e", vf));
-  meadowGrad.addColorStop(1, meadowColor);
-  ctx.fillStyle = meadowGrad;
-  ctx.fillRect(0, H * 0.4, RX - rw / 2, H * 0.6);
-
-  // Add perlin noise texture to meadow
-  for (let x = 0; x < RX - rw / 2; x += 4) {
-    for (let y = H * 0.4; y < H; y += 4) {
-      const nv = noise2d(x, y, 40);
-      const intensity = (nv - 0.5) * 0.3;
-      const color = lerpColor(meadowColor, "#0a1408", intensity + 0.5);
-      ctx.fillStyle = color;
-      ctx.globalAlpha = 0.2;
-      ctx.fillRect(x, y, 4, 4);
+      // Dirt patches where noise is low
+      if (combined < 0.3) {
+        ctx.fillStyle = lerpColor("#5c4a2a", "#6b5a34", vf);
+        ctx.globalAlpha = (0.3 - combined) * 0.6;
+        ctx.fillRect(x, y, noiseStep, noiseStep);
+      }
+      // Lush patches where noise is high
+      else if (combined > 0.7) {
+        ctx.fillStyle = meadowLight;
+        ctx.globalAlpha = (combined - 0.7) * 0.5;
+        ctx.fillRect(x, y, noiseStep, noiseStep);
+      }
+      // Subtle variation elsewhere
+      else {
+        ctx.fillStyle = combined > 0.5 ? meadowLight : meadowDark;
+        ctx.globalAlpha = 0.08;
+        ctx.fillRect(x, y, noiseStep, noiseStep);
+      }
     }
   }
   ctx.globalAlpha = 1;
 
-  // ─── Ground — forest side ────────────────────────────────────────────
-  const forestColor = lerpColor("#0f2415", "#1a3a2a", vf);
-  ctx.fillStyle = forestColor;
-  ctx.fillRect(RX + rw / 2, H * 0.4, MX - RX - rw / 2, H * 0.6);
-
-  // Forest perlin texture
-  for (let x = RX + rw / 2; x < MX; x += 4) {
-    for (let y = H * 0.4; y < H; y += 4) {
-      const nv = noise2d(x, y, 35);
-      const intensity = (nv - 0.5) * 0.4;
-      const color = lerpColor(forestColor, "#051008", intensity + 0.5);
-      ctx.fillStyle = color;
-      ctx.globalAlpha = 0.25;
-      ctx.fillRect(x, y, 4, 4);
+  // Forest floor noise — darker, with needle/leaf litter feel
+  for (let x = Math.floor(RX + scaledRW / 2); x < MX; x += noiseStep) {
+    for (let y = 0; y < H; y += noiseStep) {
+      const nv = noise2d(x + 200, y + 100, 45);
+      if (nv < 0.35) {
+        ctx.fillStyle = "#1a2e15";
+        ctx.globalAlpha = 0.25;
+        ctx.fillRect(x, y, noiseStep, noiseStep);
+      } else if (nv > 0.65) {
+        ctx.fillStyle = lerpColor("#2a5020", "#3a7030", vf);
+        ctx.globalAlpha = 0.2;
+        ctx.fillRect(x, y, noiseStep, noiseStep);
+      }
     }
   }
   ctx.globalAlpha = 1;
 
-  // ─── Wildflowers (colored dots) on meadow ──────────────────────────
+  // ─── Mountain range (far right background strip) ──────────────────────
+  // Mountain base — dark rocky ground
+  const mtGrad = ctx.createLinearGradient(MX, 0, W, 0);
+  mtGrad.addColorStop(0, "#2a3a2e");
+  mtGrad.addColorStop(0.3, "#3a4a48");
+  mtGrad.addColorStop(0.7, "#4a5a58");
+  mtGrad.addColorStop(1, "#3a4a48");
+  ctx.fillStyle = mtGrad;
+  ctx.fillRect(MX, 0, W - MX, H);
+
+  // Mountain ridge silhouettes (multiple overlapping ranges for depth)
+  // Far range
+  ctx.fillStyle = "#5a6a68";
+  ctx.beginPath();
+  ctx.moveTo(MX, 0);
+  for (let y = 0; y <= H; y += 3) {
+    const pct = y / H;
+    const ridge = MX + (W - MX) * 0.3 + Math.sin(pct * 7 + 1.2) * (W - MX) * 0.15 + Math.sin(pct * 15) * (W - MX) * 0.05;
+    ctx.lineTo(ridge, y);
+  }
+  ctx.lineTo(MX, H);
+  ctx.closePath();
+  ctx.fill();
+
+  // Snow caps on ridges
+  ctx.fillStyle = "rgba(220, 230, 240, 0.3)";
+  ctx.beginPath();
+  ctx.moveTo(MX, 0);
+  for (let y = 0; y <= H; y += 3) {
+    const pct = y / H;
+    const ridge = MX + (W - MX) * 0.3 + Math.sin(pct * 7 + 1.2) * (W - MX) * 0.15 + Math.sin(pct * 15) * (W - MX) * 0.05;
+    ctx.lineTo(ridge, y);
+  }
+  for (let y = H; y >= 0; y -= 3) {
+    const pct = y / H;
+    const ridge = MX + (W - MX) * 0.3 + Math.sin(pct * 7 + 1.2) * (W - MX) * 0.15 + Math.sin(pct * 15) * (W - MX) * 0.05;
+    ctx.lineTo(ridge + (W - MX) * 0.08, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Near range (darker)
+  ctx.fillStyle = "#3a4a42";
+  ctx.beginPath();
+  ctx.moveTo(MX, 0);
+  for (let y = 0; y <= H; y += 3) {
+    const pct = y / H;
+    const ridge = MX + (W - MX) * 0.15 + Math.sin(pct * 5 + 0.5) * (W - MX) * 0.1 + Math.sin(pct * 12 + 2) * (W - MX) * 0.04;
+    ctx.lineTo(ridge, y);
+  }
+  ctx.lineTo(MX, H);
+  ctx.closePath();
+  ctx.fill();
+
+  // Mountain-to-forest transition (soft gradient)
+  const mtTransGrad = ctx.createLinearGradient(MX - 30, 0, MX + 20, 0);
+  mtTransGrad.addColorStop(0, "transparent");
+  mtTransGrad.addColorStop(1, "rgba(42, 58, 46, 0.6)");
+  ctx.fillStyle = mtTransGrad;
+  ctx.fillRect(MX - 30, 0, 50, H);
+
+  // ─── Wildflowers scattered across meadow ──────────────────────────────
   if (vf > 0.2) {
-    ctx.globalAlpha = vf * 0.4;
-    const flowerColors = ["#f87171", "#fbbf24", "#4ade80", "#38bdf8"];
-    for (let i = 0; i < Math.floor(40 * vf); i++) {
-      const fx = (i * 191.23) % (RX - rw / 2 - 10) + 10;
-      const fy = (i * 137.891 + 20) % (H * 0.5) + H * 0.4;
-      ctx.fillStyle = flowerColors[Math.floor((fx + fy) / 100) % flowerColors.length];
+    const flowerColors = ["#e87474", "#eab038", "#78d878", "#d8a0e0", "#f0d060"];
+    for (let i = 0; i < Math.floor(100 * vf); i++) {
+      const fx = (i * 191.23 + 13) % (RX - scaledRW / 2 - 20) + 10;
+      const fy = (i * 137.891 + 7) % (H - 20) + 10;
+      const nv = noise2d(fx, fy, 80);
+      if (nv < 0.4) continue;  // only in certain patches
+      ctx.fillStyle = flowerColors[i % flowerColors.length];
+      ctx.globalAlpha = vf * 0.6;
       ctx.beginPath();
-      ctx.arc(fx, fy, 1.5, 0, Math.PI * 2);
+      ctx.arc(fx, fy, 1.2 + nv, 0, Math.PI * 2);
       ctx.fill();
+      // Some flowers in small clusters
+      if (nv > 0.65) {
+        ctx.beginPath();
+        ctx.arc(fx + 3, fy - 2, 1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(fx - 2, fy + 2, 1, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
   }
 
-  // ─── Rocky areas ──────────────────────────────────────────────────────
-  ctx.fillStyle = "rgba(71, 85, 105, 0.15)";
-  for (let i = 0; i < 30; i++) {
-    const rx = (i * 277.13) % (RX - rw / 2 - 10) + 10;
-    const ry = (i * 193.47 + 50) % (H * 0.3) + H * 0.5;
+  // ─── Rocky areas (scattered on both sides) ────────────────────────────
+  ctx.fillStyle = "rgba(100, 110, 105, 0.2)";
+  for (let i = 0; i < 45; i++) {
+    const rx = (i * 277.13 + 31) % (W * 0.78) + 10;
+    const ry = (i * 193.47 + 50) % (H - 20) + 10;
+    if (Math.abs(rx - RX) < scaledRW / 2 + 10) continue;
+    const sz = 1.5 + Math.sin(i * 7.3) * 1.5;
     ctx.beginPath();
-    ctx.arc(rx, ry, 2 + Math.sin(i) * 1, 0, Math.PI * 2);
+    ctx.ellipse(rx, ry, sz * 1.3, sz, i * 0.7, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // ─── River with advanced animation and effects ─────────────────────
-  // River glow/aura
-  const glowColor = rh > 50 ? "rgba(37, 99, 235, 0.12)" : "rgba(251, 146, 60, 0.08)";
-  const glowGrad = ctx.createLinearGradient(RX - rw, H * 0.4, RX + rw, H * 0.4);
-  glowGrad.addColorStop(0, "transparent");
-  glowGrad.addColorStop(0.2, glowColor);
-  glowGrad.addColorStop(0.5, glowColor);
-  glowGrad.addColorStop(0.8, glowColor);
-  glowGrad.addColorStop(1, "transparent");
-  ctx.fillStyle = glowGrad;
-  ctx.fillRect(RX - rw * 1.2, H * 0.4, rw * 2.4, H * 0.6);
+  // ─── River with scenic water effects ──────────────────────────────────
+  // Muddy banks (gradient transition from ground to water)
+  const bankW = scaledRW * 0.4;
+  const leftBankGrad = ctx.createLinearGradient(RX - scaledRW / 2 - bankW, 0, RX - scaledRW / 2, 0);
+  leftBankGrad.addColorStop(0, "transparent");
+  leftBankGrad.addColorStop(0.5, "rgba(80, 65, 40, 0.25)");
+  leftBankGrad.addColorStop(1, "rgba(60, 50, 30, 0.4)");
+  ctx.fillStyle = leftBankGrad;
+  ctx.fillRect(RX - scaledRW / 2 - bankW, 0, bankW, H);
 
-  // River water main color
-  const rc = rh > 60 ? "#1d4ed8" : rh > 30 ? "#2563eb" : "#7c2d12";
-  const riverGrad = ctx.createLinearGradient(RX - rw / 2, H * 0.4, RX + rw / 2, H * 0.4);
-  riverGrad.addColorStop(0, lerpColor("#0f172a", rc, 0.4));
-  riverGrad.addColorStop(0.5, rc);
-  riverGrad.addColorStop(1, lerpColor("#0f172a", rc, 0.4));
+  const rightBankGrad = ctx.createLinearGradient(RX + scaledRW / 2, 0, RX + scaledRW / 2 + bankW, 0);
+  rightBankGrad.addColorStop(0, "rgba(60, 50, 30, 0.4)");
+  rightBankGrad.addColorStop(0.5, "rgba(80, 65, 40, 0.25)");
+  rightBankGrad.addColorStop(1, "transparent");
+  ctx.fillStyle = rightBankGrad;
+  ctx.fillRect(RX + scaledRW / 2, 0, bankW, H);
+
+  // River water — gradient across width
+  const waterDeep = rh > 60 ? "#1a5fb8" : rh > 30 ? "#2a6ab8" : "#6a5030";
+  const waterLight = rh > 60 ? "#3a8ae8" : rh > 30 ? "#4a90d0" : "#8a7050";
+  const riverGrad = ctx.createLinearGradient(RX - scaledRW / 2, 0, RX + scaledRW / 2, 0);
+  riverGrad.addColorStop(0, lerpColor(waterDeep, "#2a3a2a", 0.3));
+  riverGrad.addColorStop(0.2, waterDeep);
+  riverGrad.addColorStop(0.5, waterLight);
+  riverGrad.addColorStop(0.8, waterDeep);
+  riverGrad.addColorStop(1, lerpColor(waterDeep, "#2a3a2a", 0.3));
   ctx.fillStyle = riverGrad;
-  ctx.fillRect(RX - rw / 2, H * 0.4, rw, H * 0.6);
+  ctx.fillRect(RX - scaledRW / 2, 0, scaledRW, H);
 
-  // River flowing current with multiple sine layers
-  ctx.strokeStyle = `rgba(147, 197, 253, ${0.15 + rh * 0.004})`;
-  ctx.lineWidth = 0.7;
-  for (let layer = 0; layer < 3; layer++) {
-    for (let y = H * 0.4 - 10; y < H; y += 8 + layer * 3) {
+  // River current — flowing lines
+  for (let layer = 0; layer < 4; layer++) {
+    ctx.strokeStyle = `rgba(140, 200, 255, ${0.06 + rh * 0.002 + layer * 0.01})`;
+    ctx.lineWidth = 0.6 + layer * 0.2;
+    for (let y = -20; y < H + 20; y += 10 + layer * 4) {
       ctx.beginPath();
-      const phase = tick * (0.02 + layer * 0.005) + y * 0.06 + layer * 0.4;
-      const amp = (rw * 0.2) * (1 - layer * 0.2);
-      for (let x = RX - rw / 2 - 20; x <= RX + rw / 2 + 20; x += 3) {
-        const sx = RX + Math.sin(phase + x * 0.008) * amp + Math.sin(phase * 0.5 + x * 0.015) * amp * 0.5;
-        ctx.lineTo(sx, y);
+      const phase = tick * (0.025 + layer * 0.008) + y * 0.05 + layer * 1.2;
+      const amp = scaledRW * 0.12 * (1 - layer * 0.15);
+      for (let dy = 0; dy < 8; dy += 1.5) {
+        const cx = RX + Math.sin(phase + dy * 0.4) * amp;
+        ctx.lineTo(cx, y + dy);
       }
       ctx.stroke();
     }
   }
 
+  // Shimmer highlights on water
+  ctx.fillStyle = `rgba(255, 255, 255, ${0.04 + rh * 0.002})`;
+  for (let i = 0; i < 15; i++) {
+    const sx = RX + Math.sin(tick * 0.02 + i * 3.7) * scaledRW * 0.3;
+    const sy = (tick * 0.5 + i * H / 15) % H;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, 2, 0.8, tick * 0.01 + i, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   // River stones along banks
-  ctx.fillStyle = "rgba(51, 65, 85, 0.4)";
-  for (let i = 0; i < 20; i++) {
-    const sy = (i * 227.1) % H + H * 0.4;
-    const leftStone = RX - rw / 2 - 8;
-    const rightStone = RX + rw / 2 + 8;
-    ctx.beginPath();
-    ctx.arc(leftStone, sy, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(rightStone, sy, 2.5, 0, Math.PI * 2);
-    ctx.fill();
+  ctx.fillStyle = "rgba(80, 90, 85, 0.35)";
+  for (let i = 0; i < 30; i++) {
+    const sy = (i * 127.1 + 20) % H;
+    const leftS = RX - scaledRW / 2 - 4 + Math.sin(i * 5.3) * 3;
+    const rightS = RX + scaledRW / 2 + 4 + Math.sin(i * 3.7) * 3;
+    const sz = 2 + Math.sin(i * 2.1) * 1.5;
+    ctx.beginPath(); ctx.ellipse(leftS, sy, sz, sz * 0.7, i * 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(rightS, sy, sz, sz * 0.7, i * 0.3, 0, Math.PI * 2); ctx.fill();
   }
 
-  // Foam/white water at edges
-  ctx.fillStyle = `rgba(255, 255, 255, ${0.25 + rh * 0.003})`;
-  for (let y = H * 0.4; y < H; y += 15) {
-    for (let i = 0; i < 3; i++) {
-      const fx = RX - rw / 2 - 3 - i * 1.5 + Math.sin(tick * 0.05 + y * 0.02) * 2;
-      const fy = y + Math.sin(tick * 0.08 + i * 0.4) * 3;
-      ctx.fillRect(fx, fy, 2, 1);
-    }
-    for (let i = 0; i < 3; i++) {
-      const fx = RX + rw / 2 + 3 + i * 1.5 - Math.sin(tick * 0.05 + y * 0.02) * 2;
-      const fy = y + Math.sin(tick * 0.08 + i * 0.4) * 3;
-      ctx.fillRect(fx, fy, 2, 1);
-    }
+  // Foam at edges
+  ctx.fillStyle = `rgba(255, 255, 255, ${0.15 + rh * 0.002})`;
+  for (let y = 0; y < H; y += 8) {
+    const foamX1 = RX - scaledRW / 2 + Math.sin(tick * 0.04 + y * 0.03) * 2;
+    const foamX2 = RX + scaledRW / 2 + Math.sin(tick * 0.04 + y * 0.03 + 1) * 2;
+    ctx.fillRect(foamX1 - 1, y, 2, 1.5);
+    ctx.fillRect(foamX2 - 1, y, 2, 1.5);
   }
 
-  // ─── Grass detail with sway ───────────────────────────────────────────
-  if (vf > 0.15) {
-    ctx.globalAlpha = vf * 0.3;
-    ctx.strokeStyle = "#4ade80";
-    ctx.lineWidth = 0.7;
-    for (let i = 0; i < Math.floor(120 * vf); i++) {
-      const gx = (i * 137.508) % (RX - rw / 2 - 10) + 10;
-      const gy = (i * 89.33 + 17) % (H * 0.25) + H * 0.55;
-      if (Math.abs(gx - RX) < rw / 2 + 8) continue;
-      if (gx > MX) continue;
-      const sway = Math.sin(tick * 0.015 + gx * 0.05) * 2 + Math.sin(tick * 0.008 + i) * 1;
+  // ─── Grass blades with animation ──────────────────────────────────────
+  if (vf > 0.1) {
+    ctx.globalAlpha = 0.3 + vf * 0.3;
+    const grassColors = [
+      lerpColor("#5a8a30", "#7aba50", vf),
+      lerpColor("#4a7a28", "#6aaa40", vf),
+      lerpColor("#3a6a20", "#5a9a38", vf),
+    ];
+    for (let i = 0; i < Math.floor(200 * vf); i++) {
+      const gx = (i * 97.508 + 7) % (W * 0.78) + 10;
+      const gy = (i * 73.33 + 11) % (H - 20) + 10;
+      if (Math.abs(gx - RX) < scaledRW / 2 + 12) continue;
+      if (gx > MX - 10) continue;
+      ctx.strokeStyle = grassColors[i % 3];
+      ctx.lineWidth = 0.6 + Math.sin(i * 1.3) * 0.3;
+      const sway = Math.sin(tick * 0.012 + gx * 0.04 + gy * 0.02) * 2.5;
+      const bladeH = 5 + vf * 4 + Math.sin(i * 2.7) * 2;
       ctx.beginPath();
       ctx.moveTo(gx, gy);
-      ctx.lineTo(gx + sway - 1.5, gy - 6 * vf);
-      ctx.moveTo(gx + 2.5, gy);
-      ctx.lineTo(gx + 2.5 + sway + 1.2, gy - 5 * vf);
+      ctx.quadraticCurveTo(gx + sway * 0.5, gy - bladeH * 0.6, gx + sway, gy - bladeH);
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
   }
+
+  // ─── Ambient light overlay (warm upper-left, cool lower-right) ────────
+  const ambGrad = ctx.createLinearGradient(0, 0, W, H);
+  ambGrad.addColorStop(0, `rgba(255, 220, 150, ${0.04 * vf})`);
+  ambGrad.addColorStop(0.5, "transparent");
+  ambGrad.addColorStop(1, `rgba(100, 120, 180, ${0.04 * vf})`);
+  ctx.fillStyle = ambGrad;
+  ctx.fillRect(0, 0, W, H);
 
   // ─── Entities sorted by depth ────────────────────────────────────────
   const sorted = eco.entities.filter(e => e.alive).sort((a, b) => {
@@ -664,25 +730,53 @@ function renderEcosystem(ctx, eco) {
     if (e.alive || e.type === TREE) continue;
     const fade = 1 - e.age / 60;
     if (fade <= 0) continue;
-    ctx.globalAlpha = fade * 0.6;
+    ctx.globalAlpha = fade * 0.5;
     ctx.fillStyle = "#ef4444";
     ctx.beginPath();
-    ctx.arc(e.x, e.y, 4, 0, Math.PI * 2);
+    ctx.arc(e.x, e.y, 3, 0, Math.PI * 2);
     ctx.fill();
+    // Smaller scatter particles
+    for (let p = 0; p < 3; p++) {
+      const px = e.x + Math.sin(e.age * 0.3 + p * 2) * (e.age * 0.3);
+      const py = e.y + Math.cos(e.age * 0.3 + p * 2) * (e.age * 0.3);
+      ctx.beginPath();
+      ctx.arc(px, py, 1.5 * fade, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.globalAlpha = 1;
   }
 
-  // ─── Vignette effect (darken edges) ───────────────────────────────────
-  const vigGrad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.7);
+  // ─── Firefly particles in healthy areas ───────────────────────────────
+  if (vf > 0.5) {
+    ctx.fillStyle = "#fef08a";
+    for (let i = 0; i < Math.floor(12 * vf); i++) {
+      const fx = (Math.sin(tick * 0.007 + i * 4.3) * 0.5 + 0.5) * (RX - scaledRW / 2 - 20) + 10;
+      const fy = (Math.cos(tick * 0.005 + i * 3.1) * 0.5 + 0.5) * (H - 20) + 10;
+      const flicker = Math.sin(tick * 0.1 + i * 7) * 0.5 + 0.5;
+      ctx.globalAlpha = flicker * 0.4 * vf;
+      ctx.beginPath();
+      ctx.arc(fx, fy, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      // Glow
+      ctx.globalAlpha = flicker * 0.1 * vf;
+      ctx.beginPath();
+      ctx.arc(fx, fy, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ─── Vignette (darken edges/corners) ──────────────────────────────────
+  const vigGrad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
   vigGrad.addColorStop(0, "transparent");
-  vigGrad.addColorStop(1, "rgba(15, 23, 42, 0.35)");
+  vigGrad.addColorStop(1, "rgba(10, 15, 20, 0.3)");
   ctx.fillStyle = vigGrad;
   ctx.fillRect(0, 0, W, H);
 
-  // ─── Atmospheric haze (health-dependent) ──────────────────────────────
+  // ─── Atmospheric haze when ecosystem is degraded ──────────────────────
   if (vh < 40) {
-    ctx.globalAlpha = (1 - vh / 40) * 0.2;
-    ctx.fillStyle = "#8b5a2b";
+    ctx.globalAlpha = (1 - vh / 40) * 0.15;
+    ctx.fillStyle = "#8b6a3b";
     ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = 1;
   }
