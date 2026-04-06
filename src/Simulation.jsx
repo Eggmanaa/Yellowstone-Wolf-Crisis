@@ -225,8 +225,8 @@ function updateElk(elk, eco) {
 function updateTree(tree, eco) {
   if (tree.health <= 0) { tree.alive = false; return; }
   const vf = eco.vegetationHealth / 100;
-  tree.growth = clamp(tree.growth + 0.0005 * vf, 0, tree.maxGrowth);
-  tree.health = clamp(tree.health + 0.02, 0, 100);
+  tree.growth = clamp(tree.growth + 0.0008 * vf, 0, tree.maxGrowth);
+  tree.health = clamp(tree.health + 0.03, 0, 100);
   // Dynamic reproduction: more mature trees = more seed dispersal, density-limited
   if (tree.growth > 0.7 && Math.random() < 0.0012 * vf) {
     const cnt = eco.entities.filter(e => e.type === TREE && e.alive).length;
@@ -476,7 +476,10 @@ function tickEcosystem(eco) {
       e.y = clamp(e.y + e.vy, 5, H - 5);
       e.vx *= 0.92; e.vy *= 0.92;
     }
-    if (e.energy <= 0 && e.type !== TREE) e.alive = false;
+    if (e.energy <= 0 && e.type !== TREE) {
+      e.alive = false;
+      if (Math.random() < 0.5) eco.particles.push({ type: "kill", x: e.x, y: e.y, color: "#6b7280", icon: "💀", age: 0, maxAge: 70 });
+    }
     e.age++;
   }
 
@@ -2738,6 +2741,7 @@ export default function Simulation() {
   const [speed, setSpeed] = useState(1);
   const [isMobile, setIsMobile] = useState(false);
   const [isPortrait, setIsPortrait] = useState(false);
+  const [portraitDismissed, setPortraitDismissed] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [audioInit, setAudioInit] = useState(false);
   const [audioMuted, setAudioMuted] = useState(false);
@@ -2754,9 +2758,9 @@ export default function Simulation() {
   const [gameTimer, setGameTimer] = useState(0); // ticks elapsed
   const [gameState, setGameState] = useState("ready"); // ready | playing | won | lost
   const [healthyStreak, setHealthyStreak] = useState(0); // consecutive ticks in "healthy" zone
-  const GAME_DURATION = 18000; // ~5 min at 60fps (300 seconds)
-  const WIN_THRESHOLD = 75; // balance score needed
-  const WIN_STREAK_NEEDED = 1200; // must hold healthy for 20 seconds (1200 frames)
+  const GAME_DURATION = 25200; // ~7 min at 60fps (420 seconds)
+  const WIN_THRESHOLD = 70; // balance score needed
+  const WIN_STREAK_NEEDED = 900; // must hold healthy for 15 seconds (900 frames)
   const gameTimerRef = useRef(0);
   const healthyStreakRef = useRef(0);
 
@@ -2785,7 +2789,7 @@ export default function Simulation() {
   // Detect mobile and orientation
   useEffect(() => {
     const checkMobile = () => {
-      const mobile = window.innerWidth < 1024 || ('ontouchstart' in window);
+      const mobile = window.innerWidth < 900 || ('ontouchstart' in window && window.innerWidth < 1200);
       const portrait = window.innerHeight > window.innerWidth;
       setIsMobile(mobile);
       setIsPortrait(portrait);
@@ -3075,33 +3079,50 @@ export default function Simulation() {
   const m = isMobile;
   const S = {
     root: { width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: "#0a0f1a", overflow: "hidden", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: "#e2e8f0", position: "relative" },
-    topBar: { display: "flex", alignItems: "center", gap: m ? 4 : 10, padding: m ? "4px 8px" : "8px 16px", background: "#0f172a", borderBottom: "1px solid #1e293b", flexShrink: 0, height: m ? 34 : 40, zIndex: 10, overflowX: m ? "auto" : "visible", overflowY: "hidden", WebkitOverflowScrolling: "touch" },
+    topBar: { display: m ? "flex" : "flex", flexDirection: m ? "row" : "row", alignItems: "center", gap: m ? 4 : 10, padding: m ? "4px 8px" : "8px 16px", background: "#0f172a", borderBottom: "1px solid #1e293b", flexShrink: 0, height: m ? "auto" : 40, minHeight: m ? 34 : 40, zIndex: 10, overflowX: m ? "auto" : "visible", overflowY: "hidden", WebkitOverflowScrolling: "touch", flexWrap: m ? "wrap" : "nowrap" },
     main: { flex: 1, display: "flex", overflow: "hidden", position: "relative", minHeight: 0 },
-    panel: { width: panelCollapsed ? (m ? 0 : 44) : (m ? 150 : 200), background: "#0f172a", borderRight: panelCollapsed && m ? "none" : "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0, transition: "width 0.2s ease", overflow: "hidden", zIndex: 5 },
-    canvasWrap: { flex: 1, position: "relative", overflow: "hidden", minHeight: 0, minWidth: 0 },
+    panel: { width: m ? 0 : (panelCollapsed ? 44 : 200), background: "#0f172a", borderRight: m ? "none" : "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0, transition: "width 0.2s ease", overflow: "hidden", zIndex: 5 },
+    canvasWrap: { flex: 1, position: "relative", overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" },
+    bottomDock: { display: m ? "flex" : "none", height: 50, background: "rgba(15,23,42,0.95)", borderTop: "1px solid #1e293b", overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", alignItems: "center", padding: "0 8px", gap: 8, flexShrink: 0, zIndex: 5 },
+    dockSpeciesBtn: (active, color) => ({ minWidth: 44, width: 44, height: 44, borderRadius: "50%", border: active ? `3px solid ${color}` : "2px solid #334155", background: active ? `${color}25` : "rgba(30,41,59,0.5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, cursor: "pointer", flexShrink: 0, transition: "all 0.15s ease", boxShadow: active ? `0 0 8px ${color}40` : "none" }),
     btn: (active, color) => ({ padding: m ? "4px 8px" : "4px 12px", borderRadius: 6, border: active ? `1px solid ${color}` : "1px solid #334155", background: active ? `${color}20` : "transparent", color: active ? color : "#94a3b8", fontSize: m ? 10 : 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: m ? 28 : "auto" }),
     btnSolid: (bg) => ({ padding: m ? "5px 10px" : "6px 14px", borderRadius: 6, border: "none", background: bg, color: "#fff", fontSize: m ? 11 : 12, fontWeight: 700, cursor: "pointer", minHeight: m ? 28 : "auto" }),
   };
 
   return (
     <div style={S.root}>
-      {/* ═══ PORTRAIT ORIENTATION LOCK ═══ */}
-      {isMobile && isPortrait && (
+      {/* ═══ PORTRAIT ORIENTATION BANNER ═══ */}
+      {isMobile && isPortrait && !portraitDismissed && (
         <div style={{
-          position: "fixed", inset: 0, background: "#0a0f1a", zIndex: 9999,
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          padding: 40, textAlign: "center",
+          background: "linear-gradient(135deg, rgba(239,68,68,0.15), rgba(249,115,22,0.15))",
+          borderBottom: "1px solid #dc2626",
+          padding: "8px 12px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          zIndex: 50,
+          flexShrink: 0,
         }}>
-          <div style={{ fontSize: 60, marginBottom: 20, animation: "rotatePhone 2s ease-in-out infinite" }}>📱</div>
-          <h2 style={{ fontSize: 22, fontWeight: 800, margin: "0 0 12px", background: "linear-gradient(135deg, #60a5fa, #34d399)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-            Rotate Your Phone
-          </h2>
-          <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.6, maxWidth: 300 }}>
-            Turn your device to <strong style={{ color: "#e2e8f0" }}>landscape mode</strong> for the best experience. The Yellowstone ecosystem needs room to breathe.
-          </p>
-          <div style={{ marginTop: 24, padding: "10px 20px", background: "#1e293b", borderRadius: 8, border: "1px solid #334155" }}>
-            <span style={{ fontSize: 28, display: "block", transform: "rotate(-90deg)" }}>↑</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#fca5a5" }}>
+            <span style={{ fontSize: 16 }}>📱</span>
+            <span>Rotate to landscape for best experience</span>
           </div>
+          <button
+            onClick={() => setPortraitDismissed(true)}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "#94a3b8",
+              cursor: "pointer",
+              fontSize: 18,
+              padding: 0,
+              display: "flex",
+              alignItems: "center"
+            }}
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -3182,18 +3203,17 @@ export default function Simulation() {
         {!m && <button onClick={() => setShowWeb(!showWeb)} style={S.btn(showWeb, "#fb923c")}>🕸️ Web</button>}
         {!m && <button onClick={() => setShowLearn(!showLearn)} style={S.btn(showLearn, "#60a5fa")}>📚 Learn</button>}
         {!m && <button onClick={() => setShowChart(!showChart)} style={S.btn(showChart, "#60a5fa")}>📊</button>}
-        <button onClick={() => { if (m) setPanelCollapsed(!panelCollapsed); else setShowHelp(true); }} style={S.btn(false, "#64748b")}>{m ? (panelCollapsed ? '☰' : '✕') : '?'}</button>
+        <button onClick={() => setShowHelp(true)} style={S.btn(false, "#64748b")}>{m ? '?' : '?'}</button>
       </div>
 
       {/* ═══ MAIN AREA ═══ */}
       <div style={S.main}>
-        {/* ─── Left Panel ─── */}
+        {/* ─── Left Panel (desktop only) ─── */}
+        {!m && (
         <div style={S.panel}>
-          {!m && (
-            <button onClick={() => setPanelCollapsed(!panelCollapsed)} style={{ background: "transparent", border: "none", color: "#64748b", padding: "8px", cursor: "pointer", fontSize: 14, textAlign: "center" }}>
-              {panelCollapsed ? "▸" : "◂"}
-            </button>
-          )}
+          <button onClick={() => setPanelCollapsed(!panelCollapsed)} style={{ background: "transparent", border: "none", color: "#64748b", padding: "8px", cursor: "pointer", fontSize: 14, textAlign: "center" }}>
+            {panelCollapsed ? "▸" : "◂"}
+          </button>
 
           {!panelCollapsed && (
             <>
@@ -3263,9 +3283,12 @@ export default function Simulation() {
             </>
           )}
         </div>
+        )}
 
-        {/* ─── Canvas ─── */}
-        <div ref={containerRef} style={S.canvasWrap}>
+        {/* ─── Canvas & Bottom Dock Container ─── */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0 }}>
+          {/* ─── Canvas ─── */}
+          <div ref={containerRef} style={{ ...S.canvasWrap, flex: 1 }}>
           <canvas
             ref={canvasRef}
             width={canvasSize.w}
@@ -3274,9 +3297,24 @@ export default function Simulation() {
             style={{ display: "block", cursor: "crosshair", imageRendering: "crisp-edges" }}
           />
 
-          {/* Tool cursor label */}
-          <div style={{ position: "absolute", top: 8, left: 8, background: "rgba(15,23,42,0.88)", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#94a3b8", pointerEvents: "none", border: "1px solid #334155" }}>
-            + {selectedInfo?.icon} {selectedInfo?.label}
+          {/* Tool cursor label + compact HUD */}
+          <div style={{ position: "absolute", top: m ? 4 : 8, left: m ? 4 : 8, pointerEvents: "none", zIndex: 3 }}>
+            <div style={{ background: "rgba(15,23,42,0.88)", borderRadius: 6, padding: m ? "3px 8px" : "4px 10px", fontSize: m ? 10 : 11, color: "#94a3b8", border: "1px solid #334155", marginBottom: 4 }}>
+              + {selectedInfo?.icon} {selectedInfo?.label}
+            </div>
+            {/* Mini population HUD (especially useful on mobile) */}
+            {m && running && (
+              <div style={{ background: "rgba(15,23,42,0.85)", borderRadius: 6, padding: "4px 8px", border: "1px solid #1e293b", display: "flex", flexWrap: "wrap", gap: "3px 8px", maxWidth: 180 }}>
+                <span style={{ fontSize: 9, color: "#94a3b8" }}>🐺{stats.wolves}</span>
+                <span style={{ fontSize: 9, color: "#a78bfa" }}>🦌{stats.elk}</span>
+                <span style={{ fontSize: 9, color: "#22c55e" }}>🌲{stats.trees}</span>
+                <span style={{ fontSize: 9, color: "#fb923c" }}>🦫{stats.beavers}</span>
+                <span style={{ fontSize: 9, color: "#d97706" }}>🐾{stats.coyotes}</span>
+                <span style={{ fontSize: 9, color: "#67e8f9" }}>🐟{stats.fish}</span>
+                <span style={{ fontSize: 9, color: "#fbbf24" }}>🐦{stats.birds}</span>
+                <span style={{ fontSize: 9, color: "#92400e" }}>🐻{stats.bears}</span>
+              </div>
+            )}
           </div>
 
           {/* Alerts overlay */}
@@ -3427,26 +3465,53 @@ export default function Simulation() {
               </div>
             </div>
           )}
+          </div>
+
+          {/* ─── Bottom Dock (Mobile Species Selection) ─── */}
+          {m && (
+            <div style={S.bottomDock}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 6px", minWidth: 60, borderRight: "1px solid #334155" }}>
+                {selectedInfo && (
+                  <>
+                    <span style={{ fontSize: 16 }}>{selectedInfo.icon}</span>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: selectedInfo.color, whiteSpace: "nowrap" }}>{selectedInfo.label}</div>
+                      <div style={{ fontSize: 9, color: "#64748b" }}>{stats[selectedInfo.key] ?? 0}</div>
+                    </div>
+                  </>
+                )}
+              </div>
+              {SPECIES.map(sp => (
+                <button key={sp.type} onClick={() => setSelectedTool(sp.type)}
+                  style={S.dockSpeciesBtn(selectedTool === sp.type, sp.color)}
+                  title={`${sp.label} (${stats[sp.key] ?? 0})`}
+                >{sp.icon}</button>
+              ))}
+              <div style={{ display: "flex", alignItems: "center", gap: 3, padding: "0 6px", borderLeft: "1px solid #334155", fontSize: 10, color: "#64748b" }}>
+                🎯 {stats.hunters ?? 0}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* ═══ VICTORY MODAL ═══ */}
       {gameState === "won" && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-          <div style={{ background: "linear-gradient(135deg, #0f2a1a, #1e293b)", borderRadius: 16, padding: 32, maxWidth: 500, margin: 20, border: "2px solid #22c55e", textAlign: "center" }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>🐺🌲🏔️</div>
-            <h2 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 8px", color: "#86efac" }}>Ecosystem Restored!</h2>
-            <p style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.6, margin: "0 0 16px" }}>
+          <div style={{ background: "linear-gradient(135deg, #0f2a1a, #1e293b)", borderRadius: 16, padding: m ? 20 : 32, maxWidth: m ? "90vw" : 500, margin: 20, border: "2px solid #22c55e", textAlign: "center" }}>
+            <div style={{ fontSize: m ? 36 : 48, marginBottom: 12 }}>🐺🌲🏔️</div>
+            <h2 style={{ fontSize: m ? 18 : 24, fontWeight: 800, margin: "0 0 8px", color: "#86efac" }}>Ecosystem Restored!</h2>
+            <p style={{ fontSize: m ? 12 : 14, color: "#cbd5e1", lineHeight: 1.6, margin: "0 0 16px" }}>
               You achieved a balanced ecosystem and held it stable. Wolves are controlling elk, vegetation is thriving, rivers are healthy, and the entire food web is functioning.
             </p>
-            <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 16px", padding: "10px 14px", background: "#0f172a", borderRadius: 8, lineHeight: 1.5 }}>
+            <p style={{ fontSize: m ? 10 : 12, color: "#94a3b8", margin: "0 0 16px", padding: m ? "8px 10px" : "10px 14px", background: "#0f172a", borderRadius: 8, lineHeight: 1.5 }}>
               <strong style={{ color: "#60a5fa" }}>In real Yellowstone:</strong> This recovery took from 1995 to roughly 2010 — about 15 years. You did it in {Math.floor(gameTimerRef.current / 60)} seconds of simulation time!
             </p>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-              <button onClick={handleStartGame} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            <div style={{ display: "flex", gap: m ? 6 : 10, justifyContent: "center", flexDirection: m ? "column" : "row" }}>
+              <button onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 24px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
                 Play Again
               </button>
-              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 24px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
                 Free Play
               </button>
             </div>
@@ -3457,23 +3522,23 @@ export default function Simulation() {
       {/* ═══ LOSS MODAL ═══ */}
       {gameState === "lost" && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-          <div style={{ background: "linear-gradient(135deg, #2a0f0f, #1e293b)", borderRadius: 16, padding: 32, maxWidth: 500, margin: 20, border: "2px solid #ef4444", textAlign: "center" }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>💀🏜️</div>
-            <h2 style={{ fontSize: 24, fontWeight: 800, margin: "0 0 8px", color: "#fca5a5" }}>Ecosystem Collapsed</h2>
-            <p style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.6, margin: "0 0 16px" }}>
+          <div style={{ background: "linear-gradient(135deg, #2a0f0f, #1e293b)", borderRadius: 16, padding: m ? 20 : 32, maxWidth: m ? "90vw" : 500, margin: 20, border: "2px solid #ef4444", textAlign: "center" }}>
+            <div style={{ fontSize: m ? 36 : 48, marginBottom: 12 }}>💀🏜️</div>
+            <h2 style={{ fontSize: m ? 18 : 24, fontWeight: 800, margin: "0 0 8px", color: "#fca5a5" }}>Ecosystem Collapsed</h2>
+            <p style={{ fontSize: m ? 12 : 14, color: "#cbd5e1", lineHeight: 1.6, margin: "0 0 16px" }}>
               Time ran out before you could stabilize the ecosystem. The balance score needed to reach {WIN_THRESHOLD} and hold for {Math.round(WIN_STREAK_NEEDED / 60)} seconds.
             </p>
-            <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 8px", lineHeight: 1.5 }}>
-              <strong>Your final score:</strong> <span style={{ color: getScoreColor(score), fontWeight: 700, fontSize: 16 }}>{score}</span>
+            <p style={{ fontSize: m ? 10 : 12, color: "#94a3b8", margin: "0 0 8px", lineHeight: 1.5 }}>
+              <strong>Your final score:</strong> <span style={{ color: getScoreColor(score), fontWeight: 700, fontSize: m ? 14 : 16 }}>{score}</span>
             </p>
-            <p style={{ fontSize: 11, color: "#64748b", margin: "0 0 16px", padding: "8px 12px", background: "#0f172a", borderRadius: 8 }}>
+            <p style={{ fontSize: m ? 9 : 11, color: "#64748b", margin: "0 0 16px", padding: m ? "6px 10px" : "8px 12px", background: "#0f172a", borderRadius: 8 }}>
               <strong style={{ color: "#eab308" }}>Hint:</strong> {score < 40 ? "Try adding wolves early — they control elk and trigger the whole cascade of recovery." : score < 60 ? "You're on the right track. Focus on getting wolves and elk balanced first, then let vegetation recover." : "So close! Once the balance score hits " + WIN_THRESHOLD + ", you need to hold it steady. Avoid adding too many of any one species."}
             </p>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-              <button onClick={handleStartGame} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #dc2626, #ea580c)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            <div style={{ display: "flex", gap: m ? 6 : 10, justifyContent: "center", flexDirection: m ? "column" : "row" }}>
+              <button onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 24px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #dc2626, #ea580c)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
                 Try Again
               </button>
-              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: "10px 24px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 24px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
                 Free Play
               </button>
             </div>
@@ -3484,24 +3549,24 @@ export default function Simulation() {
       {/* ═══ INTRO / HELP MODAL ═══ */}
       {showHelp && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => { setShowHelp(false); playIntroNarration(); }}>
-          <div style={{ background: "linear-gradient(135deg, #0f172a, #1e293b)", borderRadius: 16, padding: "28px 28px 20px", maxWidth: 500, margin: 16, border: "1px solid #334155", textAlign: "center" }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>🐺🏔️</div>
-            <h2 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 6px", background: "linear-gradient(135deg, #ef4444, #f97316)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+          <div style={{ background: "linear-gradient(135deg, #0f172a, #1e293b)", borderRadius: 16, padding: m ? "20px 18px 16px" : "28px 28px 20px", maxWidth: m ? "90vw" : 500, margin: 16, border: "1px solid #334155", textAlign: "center", maxHeight: m ? "90vh" : "auto", overflowY: m ? "auto" : "visible" }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: m ? 32 : 40, marginBottom: 8 }}>🐺🏔️</div>
+            <h2 style={{ fontSize: m ? 16 : 20, fontWeight: 800, margin: "0 0 6px", background: "linear-gradient(135deg, #ef4444, #f97316)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
               Yellowstone, 1926
             </h2>
-            <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 14px", fontStyle: "italic" }}>The last wolf has been killed.</p>
+            <p style={{ fontSize: m ? 11 : 13, color: "#94a3b8", margin: "0 0 14px", fontStyle: "italic" }}>The last wolf has been killed.</p>
 
-            <div style={{ fontSize: 12, lineHeight: 1.7, color: "#cbd5e1", textAlign: "left" }}>
+            <div style={{ fontSize: m ? 11 : 12, lineHeight: 1.7, color: "#cbd5e1", textAlign: "left" }}>
               <p style={{ margin: "0 0 10px" }}>The U.S. government has systematically exterminated every wolf in Yellowstone. Elk herds are exploding, devouring the willows and aspens. Rivers are eroding. The ecosystem is collapsing.</p>
               <p style={{ margin: "0 0 10px" }}><strong style={{ color: "#60a5fa" }}>Your mission:</strong> Restore the ecosystem by reintroducing species. Reach a balance score of <strong>{WIN_THRESHOLD}+</strong> and hold it for <strong>{Math.round(WIN_STREAK_NEEDED / 60)}s</strong> to win.</p>
-              <p style={{ margin: "0 0 10px", padding: "8px 12px", background: "#0f172a", borderRadius: 8, fontSize: 11 }}>
+              <p style={{ margin: "0 0 10px", padding: m ? "6px 10px" : "8px 12px", background: "#0f172a", borderRadius: 8, fontSize: m ? 9 : 11 }}>
                 <strong style={{ color: "#60a5fa" }}>The Cascade:</strong> Wolves → Elk → Vegetation → Rivers → Beavers/Fish/Songbirds
                 <br />
                 <strong style={{ color: "#f97316" }}>Side Effect:</strong> No wolves → Coyote boom → Rabbit/bird decline
               </p>
-              <p style={{ margin: "0 0 6px", fontSize: 11, color: "#64748b" }}>Select species from the panel, click the map to add them. Tap <strong>Start Challenge</strong> to begin the timer.</p>
+              <p style={{ margin: "0 0 6px", fontSize: m ? 9 : 11, color: "#64748b" }}>Select species from the panel, click the map to add them. Tap <strong>Start Challenge</strong> to begin the timer.</p>
             </div>
-            <button onClick={() => { setShowHelp(false); playIntroNarration(); }} style={{ width: "100%", padding: "12px 0", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer", marginTop: 10 }}>
+            <button onClick={() => { setShowHelp(false); playIntroNarration(); }} style={{ width: "100%", padding: m ? "10px 0" : "12px 0", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 13 : 15, cursor: "pointer", marginTop: 10 }}>
               Begin Restoration
             </button>
           </div>
