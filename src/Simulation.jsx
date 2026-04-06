@@ -3471,7 +3471,7 @@ export default function Simulation() {
 
         {/* Sim controls */}
         {gameState === "ready" ? (
-          <button onClick={handleStartGame} style={S.btnSolid("#16a34a")}>▶ Start Challenge</button>
+          <button onClick={handleStartGame} style={S.btnSolid("#16a34a")}>▶ Start</button>
         ) : gameState === "playing" ? (
           <button onClick={() => setRunning(!running)} style={S.btnSolid(running ? "#dc2626" : "#16a34a")}>
             {running ? "⏸ Pause" : "▶ Resume"}
@@ -3811,7 +3811,7 @@ export default function Simulation() {
               You achieved a balanced ecosystem and held it stable. Wolves are controlling elk, vegetation is thriving, rivers are healthy, and the entire food web is functioning.
             </p>
             <p style={{ fontSize: m ? 10 : 12, color: "#94a3b8", margin: "0 0 16px", padding: m ? "8px 10px" : "10px 14px", background: "#0f172a", borderRadius: 8, lineHeight: 1.5 }}>
-              <strong style={{ color: "#60a5fa" }}>In real Yellowstone:</strong> This recovery took from 1995 to roughly 2010 — about 15 years. You did it in {Math.floor(gameTimerRef.current / 60)} seconds of simulation time!
+              <strong style={{ color: "#60a5fa" }}>In real Yellowstone:</strong> This recovery took from 1995 to roughly 2010 — about 15 years. You did it in {Math.floor(gameTimerRef.current / 60)} seconds ({Math.round(GAME_DURATION / 60 - gameTimerRef.current / 60)}s remaining)!
             </p>
             <div style={{ display: "flex", gap: m ? 6 : 10, justifyContent: "center", flexDirection: m ? "column" : "row" }}>
               <button onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 24px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
@@ -3854,7 +3854,7 @@ export default function Simulation() {
 
       {/* ═══ INTRO / HELP MODAL ═══ */}
       {showHelp && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => { setShowHelp(false); playIntroNarration(); }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => { setShowHelp(false); playIntroNarration(); handleStartGame(); }}>
           <div style={{ background: "linear-gradient(135deg, #0f172a, #1e293b)", borderRadius: 16, padding: m ? "20px 18px 16px" : "28px 28px 20px", maxWidth: m ? "90vw" : 500, margin: 16, border: "1px solid #334155", textAlign: "center", maxHeight: m ? "90vh" : "auto", overflowY: m ? "auto" : "visible" }} onClick={e => e.stopPropagation()}>
             <div style={{ fontSize: m ? 32 : 40, marginBottom: 8 }}>🐺🏔️</div>
             <h2 style={{ fontSize: m ? 16 : 20, fontWeight: 800, margin: "0 0 6px", background: "linear-gradient(135deg, #ef4444, #f97316)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
@@ -3864,7 +3864,7 @@ export default function Simulation() {
 
             <div style={{ fontSize: m ? 11 : 12, lineHeight: 1.7, color: "#cbd5e1", textAlign: "left" }}>
               <p style={{ margin: "0 0 10px" }}>The U.S. government has systematically exterminated every wolf in Yellowstone. Elk herds are exploding, devouring the willows and aspens. Rivers are eroding. The ecosystem is collapsing.</p>
-              <p style={{ margin: "0 0 10px" }}><strong style={{ color: "#60a5fa" }}>Your mission:</strong> Restore the ecosystem by reintroducing species. Reach a balance score of <strong>{WIN_THRESHOLD}+</strong> and hold it for <strong>{Math.round(WIN_STREAK_NEEDED / 60)}s</strong> to win.</p>
+              <p style={{ margin: "0 0 10px" }}><strong style={{ color: "#60a5fa" }}>Your mission:</strong> Restore the ecosystem by reintroducing species. Reach a balance score of <strong>{WIN_THRESHOLD}+</strong> and hold it steady for <strong>{Math.round(WIN_STREAK_NEEDED / 60)}s</strong> to win. You have <strong>{Math.round(GAME_DURATION / 60)}s</strong> ({Math.round(GAME_DURATION / 3600)} minutes) before the ecosystem collapses beyond recovery.</p>
               <p style={{ margin: "0 0 10px", padding: m ? "6px 10px" : "8px 12px", background: "#0f172a", borderRadius: 8, fontSize: m ? 9 : 11 }}>
                 <strong style={{ color: "#60a5fa" }}>The Cascade:</strong> Wolves → Elk → Vegetation → Rivers → Beavers/Fish/Songbirds
                 <br />
@@ -3872,7 +3872,7 @@ export default function Simulation() {
               </p>
               <p style={{ margin: "0 0 6px", fontSize: m ? 9 : 11, color: "#64748b" }}>Select species from the panel, click the map to add them. Tap <strong>Start Challenge</strong> to begin the timer.</p>
             </div>
-            <button onClick={() => { setShowHelp(false); playIntroNarration(); }} style={{ width: "100%", padding: m ? "10px 0" : "12px 0", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 13 : 15, cursor: "pointer", marginTop: 10 }}>
+            <button onClick={() => { setShowHelp(false); playIntroNarration(); handleStartGame(); }} style={{ width: "100%", padding: m ? "10px 0" : "12px 0", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 13 : 15, cursor: "pointer", marginTop: 10 }}>
               Begin Restoration
             </button>
           </div>
