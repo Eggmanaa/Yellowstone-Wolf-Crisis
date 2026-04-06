@@ -499,10 +499,47 @@ function tickEcosystem(eco) {
   eco.riverHealth = clamp(eco.riverHealth + (targetRiver - eco.riverHealth) * 0.005, 0, 100);
   eco.riverWidth = TERRAIN.riverBaseW + (100 - eco.riverHealth) * 0.35;
 
-  if (eco.tick % 100 === 0 && eco.vegetationHealth > 30 && treeCount < 130) {
-    const newTree = createEntity(TREE, null, null, W, H);
-    eco.entities.push(newTree);
-    eco.particles.push({ type: "growth", x: newTree.x, y: newTree.y, color: "#22c55e", icon: "🌱", age: 0, maxAge: 100 });
+  // Ecosystem cascade effects from species die-offs
+  const rabbitCount = eco.entities.filter(e => e.type === RABBIT && e.alive).length;
+  const birdCount = eco.entities.filter(e => e.type === BIRD && e.alive).length;
+  const coyoteCount = eco.entities.filter(e => e.type === COYOTE && e.alive).length;
+
+  // Bird die-off: reduced seed dispersal slows vegetation recovery
+  if (birdCount < 4) {
+    eco.vegetationHealth = clamp(eco.vegetationHealth - 0.008, 0, 100);
+  }
+
+  // Rabbit die-off: less soil aeration, slight vegetation impact
+  if (rabbitCount < 5) {
+    eco.vegetationHealth = clamp(eco.vegetationHealth - 0.004, 0, 100);
+  }
+
+  // Coyote extinction: rabbit population explodes, overgrazing intensifies
+  // (This is handled naturally by the reproduction system — without coyote predation, rabbits breed unchecked)
+
+  // Rabbit overpopulation: competes with elk for ground vegetation
+  if (rabbitCount > 40) {
+    eco.vegetationHealth = clamp(eco.vegetationHealth - 0.006 * (rabbitCount / 40), 0, 100);
+  }
+
+  // Natural tree spawning — driven by ecosystem health, elk browse pressure, and bird seed dispersal
+  if (eco.tick % 80 === 0 && treeCount < 160) {
+    const elkCount = eco.entities.filter(e => e.type === ELK && e.alive).length;
+    const wolfCount = eco.entities.filter(e => e.type === WOLF && e.alive).length;
+    const birdCount = eco.entities.filter(e => e.type === BIRD && e.alive).length;
+    // Wolves create "ecology of fear" — elk avoid lingering near riverbanks, allowing saplings to grow
+    const fearEffect = wolfCount > 0 ? clamp(wolfCount / 10, 0.3, 1.5) : 0.1;
+    // Heavy elk browsing kills saplings
+    const browsePressure = clamp(1.3 - elkCount / 55, 0.1, 1.3);
+    // Birds disperse seeds — more birds = more saplings
+    const seedDispersal = clamp(0.4 + birdCount / 20, 0.4, 1.5);
+    // Base spawn chance depends on existing vegetation health
+    const baseChance = eco.vegetationHealth > 20 ? 0.6 : 0.15;
+    if (Math.random() < baseChance * fearEffect * browsePressure * seedDispersal) {
+      const newTree = createEntity(TREE, null, null, W, H);
+      eco.entities.push(newTree);
+      eco.particles.push({ type: "growth", x: newTree.x, y: newTree.y, color: "#22c55e", icon: "🌱", age: 0, maxAge: 100 });
+    }
   }
 
   // Auto-spawn/despawn hunters (historical hunting pressure simulation)
@@ -2410,6 +2447,86 @@ const INSIGHTS = [
     severity: 'warning'
   },
   {
+    id: 'coyote_suppressed',
+    condition: (s) => s.coyotes < 4 && s.wolves > 8,
+    cooldown: 300,
+    title: 'Coyote Suppression',
+    narrative: 'Wolf dominance has drastically suppressed coyote numbers. While this is historically accurate, fewer coyotes means rabbits and rodents will multiply rapidly, increasing ground-level grazing pressure.',
+    spokenLines: [
+      'Wolves are dominating the landscape and coyotes are vanishing. Historically accurate, but watch the rabbit population — without coyotes to control them, rabbits will explode.',
+      'Coyote suppression by wolves. This actually happened when wolves returned to Yellowstone. Small prey species boomed in response.',
+      'The coyote population has collapsed under wolf pressure. Nature will compensate — expect a rabbit boom and shifts in ground-level vegetation.',
+    ],
+    concept: 'Intraguild Predation',
+    conceptDetail: 'When apex predators suppress or kill mesopredators, releasing pressure on smaller prey species.',
+    historicalNote: 'Yellowstone coyote numbers dropped by 50% within two years of wolf reintroduction in 1995.',
+    severity: 'info'
+  },
+  {
+    id: 'coyote_extinct',
+    condition: (s) => s.coyotes === 0,
+    cooldown: 350,
+    title: 'Coyotes Gone',
+    narrative: 'Coyotes have been completely eliminated. Without any mesopredator, small mammals will breed unchecked. This creates an unusual imbalance — even though wolves are present, the food web has a missing link.',
+    spokenLines: [
+      'Coyotes are completely gone. The mid-level of the food chain is empty. Rabbits and rodents are breeding with zero predation pressure.',
+      'No coyotes at all. This is actually worse than it sounds. Every level of the food web plays a role, and this gap will ripple through the ecosystem.',
+      'Complete coyote loss. In a healthy ecosystem, mesopredators like coyotes keep small mammals in check. Without them, expect cascading overpopulation below.',
+    ],
+    concept: 'Food Web Completeness',
+    conceptDetail: 'A healthy ecosystem needs all trophic levels — apex, meso, and prey — functioning in balance.',
+    historicalNote: 'Even during peak wolf presence in Yellowstone, coyotes persisted at reduced numbers — their complete loss is an imbalance.',
+    severity: 'warning'
+  },
+  {
+    id: 'rabbit_boom',
+    condition: (s) => s.rabbits > 45,
+    cooldown: 280,
+    title: 'Rabbit Overpopulation',
+    narrative: 'Rabbit populations have exploded — likely from insufficient predation. Too many rabbits means heavy ground-level grazing, competing with elk for vegetation and degrading soil through overburrowing.',
+    spokenLines: [
+      'Rabbits everywhere. Without enough predators, their population has exploded. They are now competing with elk for ground vegetation.',
+      'Rabbit overpopulation is stripping the ground cover. This adds yet another layer of grazing pressure on an already stressed ecosystem.',
+      'Too many rabbits. In nature, coyotes, foxes, and raptors keep them balanced. Remove those controls, and the population spirals.',
+    ],
+    concept: 'Herbivore Overcompensation',
+    conceptDetail: 'When predation is removed, prey species overshoot their ecological carrying capacity, degrading their own habitat.',
+    historicalNote: 'Rodent and rabbit populations in Yellowstone shifted measurably with changes in coyote and wolf numbers.',
+    severity: 'warning'
+  },
+  {
+    id: 'bird_extinction',
+    condition: (s) => s.birds === 0,
+    cooldown: 350,
+    title: 'Silent Spring',
+    narrative: 'All songbirds have disappeared. Without birds, seed dispersal drops dramatically, insect populations go unchecked, and the ecosystem loses a critical indicator species. The silence is deafening.',
+    spokenLines: [
+      'Every songbird is gone. This is a Silent Spring moment. Without birds, seed dispersal collapses and insect populations explode unchecked.',
+      'Total bird loss. Rachel Carson warned about this. Birds are not just beautiful — they are essential for seed dispersal, insect control, and ecosystem monitoring.',
+      'The forest is silent. No birdsong means no seed dispersal, no insect control. Vegetation recovery will slow dramatically without them.',
+    ],
+    concept: 'Ecosystem Services',
+    conceptDetail: 'Birds provide critical services: seed dispersal, insect control, pollination support, and nutrient cycling.',
+    historicalNote: 'Rachel Carson\'s Silent Spring warned of ecological collapse when bird populations crash.',
+    severity: 'critical'
+  },
+  {
+    id: 'rabbit_extinct',
+    condition: (s) => s.rabbits === 0,
+    cooldown: 350,
+    title: 'Small Mammals Gone',
+    narrative: 'Rabbits have been completely wiped out, likely by coyote overpredation. Without small herbivores, coyotes will starve and the food web loses another link. Soil health will decline without burrowing activity.',
+    spokenLines: [
+      'Rabbits are completely gone. Coyotes have nothing left to eat at the lower trophic level. Expect coyote starvation next.',
+      'Small mammal extinction. Rabbits provided food for coyotes and aerated the soil through burrowing. Their loss cascades in both directions.',
+      'No rabbits left. The food web just lost another critical link. Without prey, coyotes will decline. Without burrowing, soil health drops.',
+    ],
+    concept: 'Prey Base Collapse',
+    conceptDetail: 'When prey species are eliminated, their predators decline and ecosystem functions they provided are lost.',
+    historicalNote: 'Small mammal diversity in Yellowstone is a key indicator of overall ecosystem function.',
+    severity: 'critical'
+  },
+  {
     id: 'fish_decline',
     condition: (s) => s.fish < 10,
     cooldown: 250,
@@ -2701,7 +2818,6 @@ function FoodWebDiagram({ stats }) {
 const SPECIES = [
   { type: WOLF, icon: "🐺", label: "Wolves", key: "wolves", color: "#94a3b8", desc: "Apex predator. Controls elk, suppresses coyotes." },
   { type: ELK, icon: "🦌", label: "Elk", key: "elk", color: "#a78bfa", desc: "Primary herbivore. Grazes willows and aspens." },
-  { type: TREE, icon: "🌲", label: "Trees", key: "trees", color: "#22c55e", desc: "Willows & aspens. Stabilize riverbanks." },
   { type: BEAVER, icon: "🦫", label: "Beavers", key: "beavers", color: "#fb923c", desc: "Build dams from willows. Create wetland habitat." },
   { type: COYOTE, icon: "🐾", label: "Coyotes", key: "coyotes", color: "#d97706", desc: "Mesopredator. Boom without wolf suppression." },
   { type: FISH, icon: "🐟", label: "Fish", key: "fish", color: "#67e8f9", desc: "Need cool, shaded, stable water." },
@@ -2712,6 +2828,7 @@ const SPECIES = [
 
 // Locked species shown as info-only in panel
 const LOCKED_SPECIES = [
+  { type: TREE, icon: "🌲", label: "Trees", key: "trees", color: "#22c55e", desc: "Grow naturally from ecosystem health. Cannot be planted." },
   { type: HUNTER, icon: "🎯", label: "Hunters", key: "hunters", color: "#ef4444", desc: "Auto — appear when wolves are present. Simulates historical hunting pressure." },
 ];
 
