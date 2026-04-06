@@ -3870,7 +3870,7 @@ export default function Simulation() {
                 <br />
                 <strong style={{ color: "#f97316" }}>Side Effect:</strong> No wolves → Coyote boom → Rabbit/bird decline
               </p>
-              <p style={{ margin: "0 0 6px", fontSize: m ? 9 : 11, color: "#64748b" }}>Select species from the panel, click the map to add them. Tap <strong>Start Challenge</strong> to begin the timer.</p>
+              <p style={{ margin: "0 0 6px", fontSize: m ? 9 : 11, color: "#64748b" }}>Select species from the panel, then click the map to place them. The timer starts when you begin!</p>
             </div>
             <button onClick={() => { setShowHelp(false); playIntroNarration(); handleStartGame(); }} style={{ width: "100%", padding: m ? "10px 0" : "12px 0", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 13 : 15, cursor: "pointer", marginTop: 10 }}>
               Begin Restoration
