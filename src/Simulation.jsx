@@ -2019,102 +2019,284 @@ class SoundscapeManager {
   constructor() {
     this.initialized = false;
     this.enabled = true;
-    this.masterVolume = -25;
-    this.synths = {};
-    this.noises = {};
-    this.lastWolfHowl = 0;
+    this.muted = false;
+    this.masterVol = null;
+    this.layers = {};
+    this.lastTrigger = {};
+    this.ideals = { wolves: 12, elk: 38, trees: 85, beavers: 8, coyotes: 8, fish: 18, birds: 12, rabbits: 22, bears: 6 };
   }
 
   async init() {
     if (this.initialized) return;
     await Tone.start();
 
-    // Ambient pad
-    this.synths.pad = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'triangle' },
-      envelope: { attack: 0.5, decay: 0.5, sustain: 0.3, release: 2 }
-    }).toDestination();
-    this.synths.pad.volume.value = this.masterVolume;
+    this.masterVol = new Tone.Volume(-12).toDestination();
 
-    // Bird synth
-    this.synths.bird = new Tone.Synth({
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.01, decay: 0.1, sustain: 0, release: 0.1 }
-    }).toDestination();
-    this.synths.bird.volume.value = -18;
+    // === HARMONY PAD (background drone shifts with ecosystem health) ===
+    this.layers.pad = {
+      synth: new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: 'triangle' },
+        envelope: { attack: 1.5, decay: 1, sustain: 0.4, release: 3 }
+      }).connect(new Tone.Volume(-22).connect(this.masterVol)),
+      lastChord: null,
+    };
 
-    // Water noise
-    this.noises.water = new Tone.Noise("pink").connect(new Tone.Filter({ frequency: 2000, type: 'lowpass' }).toDestination());
-    this.noises.water.volume.value = -28;
+    // === WOLF: haunting sine glides ===
+    this.layers.wolf = {
+      synth: new Tone.Synth({
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.3, decay: 1.8, sustain: 0, release: 1.2 }
+      }).connect(new Tone.Volume(-20).connect(this.masterVol)),
+      vol: -20,
+    };
 
-    // Wind noise
-    this.noises.wind = new Tone.Noise("brown").connect(new Tone.Filter({ frequency: 300, type: 'lowpass' }).toDestination());
-    this.noises.wind.volume.value = -32;
+    // === ELK: bugling membrane hits ===
+    this.layers.elk = {
+      synth: new Tone.MembraneSynth({
+        pitchDecay: 0.08,
+        octaves: 3,
+        envelope: { attack: 0.01, decay: 0.6, sustain: 0, release: 0.4 }
+      }).connect(new Tone.Volume(-24).connect(this.masterVol)),
+      vol: -24,
+    };
 
-    // Pulse synth
-    this.synths.pulse = new Tone.MembraneSynth().toDestination();
-    this.synths.pulse.volume.value = -28;
+    // === BIRDS: high sine chirps ===
+    this.layers.bird = {
+      synth: new Tone.Synth({
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.005, decay: 0.06, sustain: 0, release: 0.05 }
+      }).connect(new Tone.Volume(-16).connect(this.masterVol)),
+      vol: -16,
+    };
 
-    this.noises.water.start();
-    this.noises.wind.start();
+    // === COYOTE: FM yips ===
+    this.layers.coyote = {
+      synth: new Tone.FMSynth({
+        harmonicity: 3.5,
+        modulationIndex: 8,
+        oscillator: { type: 'sine' },
+        modulation: { type: 'square' },
+        envelope: { attack: 0.005, decay: 0.15, sustain: 0, release: 0.1 },
+        modulationEnvelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.05 }
+      }).connect(new Tone.Volume(-22).connect(this.masterVol)),
+      vol: -22,
+    };
+
+    // === BEAVER: tail slap noise bursts ===
+    const beaverFilter = new Tone.Filter({ frequency: 800, type: 'bandpass', Q: 2 }).connect(new Tone.Volume(-26).connect(this.masterVol));
+    this.layers.beaver = {
+      noise: new Tone.NoiseSynth({
+        noise: { type: 'white' },
+        envelope: { attack: 0.002, decay: 0.08, sustain: 0, release: 0.02 }
+      }).connect(beaverFilter),
+      vol: -26,
+    };
+
+    // === FISH: subtle splash ===
+    const fishFilter = new Tone.Filter({ frequency: 3000, type: 'bandpass', Q: 1 }).connect(new Tone.Volume(-30).connect(this.masterVol));
+    this.layers.fish = {
+      noise: new Tone.NoiseSynth({
+        noise: { type: 'pink' },
+        envelope: { attack: 0.001, decay: 0.04, sustain: 0, release: 0.03 }
+      }).connect(fishFilter),
+      vol: -30,
+    };
+
+    // === RABBIT: soft shuffle ===
+    const rabbitFilter = new Tone.Filter({ frequency: 1200, type: 'lowpass' }).connect(new Tone.Volume(-32).connect(this.masterVol));
+    this.layers.rabbit = {
+      noise: new Tone.NoiseSynth({
+        noise: { type: 'brown' },
+        envelope: { attack: 0.001, decay: 0.03, sustain: 0, release: 0.02 }
+      }).connect(rabbitFilter),
+      vol: -32,
+    };
+
+    // === BEAR: deep rumble ===
+    this.layers.bear = {
+      synth: new Tone.Synth({
+        oscillator: { type: 'sawtooth' },
+        envelope: { attack: 0.4, decay: 1.2, sustain: 0, release: 0.8 }
+      }).connect(new Tone.Filter({ frequency: 200, type: 'lowpass' }).connect(new Tone.Volume(-24).connect(this.masterVol))),
+      vol: -24,
+    };
+
+    // === AMBIENT: water (pink noise) ===
+    const waterFilter = new Tone.Filter({ frequency: 1800, type: 'lowpass' }).connect(new Tone.Volume(-26).connect(this.masterVol));
+    this.layers.water = {
+      noise: new Tone.Noise("pink").connect(waterFilter),
+      filter: waterFilter,
+      baseVol: -26,
+    };
+    this.layers.water.noise.start();
+
+    // === AMBIENT: wind (brown noise) ===
+    const windFilter = new Tone.Filter({ frequency: 350, type: 'lowpass' }).connect(new Tone.Volume(-30).connect(this.masterVol));
+    this.layers.wind = {
+      noise: new Tone.Noise("brown").connect(windFilter),
+      filter: windFilter,
+      baseVol: -30,
+    };
+    this.layers.wind.noise.start();
 
     this.initialized = true;
   }
 
-  update(stats, alerts) {
-    if (!this.initialized || !this.enabled) return;
-
-    const health = (stats.wolves / 15) * 100 + (stats.trees / 85) * 100;
-
-    // Update ambient pad chord based on ecosystem health
-    const score = (stats.wolves / 15 + stats.elk / 45 + stats.trees / 90) * 33;
-    let notes = [];
-    if (score > 70) notes = ['C4', 'E4', 'G4'];
-    else if (score > 40) notes = ['A3', 'C4', 'E4'];
-    else notes = ['B3', 'D4', 'F4'];
-
-    this.synths.pad.triggerAttackRelease(notes, '8n');
-
-    // Bird calls proportional to songbird population
-    if (stats.birds >= 5 && Math.random() < 0.3) {
-      const noteNum = Math.floor(Math.random() * 12) + 84;
-      const freq = 440 * Math.pow(2, (noteNum - 69) / 12);
-      this.synths.bird.frequency.value = freq;
-      this.synths.bird.triggerAttackRelease('64n');
-    }
-
-    // Water/wind modulation
-    this.noises.water.volume.value = -28 + (stats.riverHealth / 100) * 8;
-    this.noises.wind.volume.value = -32 + (100 - stats.vegetationHealth) / 100 * 6;
-
-    // Wolf howl event
-    if (stats.wolves > 0 && Math.random() < 0.01 && Date.now() - this.lastWolfHowl > 15000) {
-      this.triggerWolfHowl();
-      this.lastWolfHowl = Date.now();
-    }
-
-    // Tension pulse for alerts
-    if (alerts.length > 0 && Math.random() < (alerts.length > 2 ? 0.4 : 0.2)) {
-      const interval = alerts.length > 2 ? 1.5 : 4;
-      this.synths.pulse.triggerAttackRelease('32n', interval * 0.3);
-    }
+  _volScale(pop, ideal, baseVol) {
+    const ratio = clamp(pop / Math.max(ideal, 1), 0, 2.5);
+    // At 0 pop: -Infinity (silent). At ideal: baseVol. At 2.5x ideal: baseVol + 8dB (loud/dominant)
+    if (pop === 0) return -80;
+    return baseVol + (ratio - 1) * 6;
   }
 
-  triggerWolfHowl() {
-    const howl = new Tone.Synth({
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.1, decay: 2, sustain: 0, release: 0.5 }
-    }).toDestination();
-    howl.volume.value = -22;
-    howl.frequency.exponentialRampToValueAtTime(180, Tone.now() + 2);
-    howl.triggerAttackRelease(2);
+  update(stats, alerts) {
+    if (!this.initialized || !this.enabled || this.muted) return;
+    const now = Date.now();
+
+    // === HARMONY PAD: chord shifts with balance score ===
+    const score = stats.vegetationHealth * 0.3 + stats.riverHealth * 0.2 +
+      clamp(stats.wolves / 15, 0, 1) * 20 + clamp(stats.birds / 12, 0, 1) * 15 +
+      clamp(stats.beavers / 8, 0, 1) * 15;
+    let chord;
+    if (score > 55) chord = ['C3', 'E3', 'G3'];         // Major — harmonious
+    else if (score > 38) chord = ['C3', 'F3', 'G3'];    // Sus4 — tension
+    else if (score > 20) chord = ['C3', 'Eb3', 'G3'];   // Minor — melancholy
+    else chord = ['C3', 'Eb3', 'Gb3'];                  // Dim — dissonant
+    const chordKey = chord.join(',');
+    if (chordKey !== this.layers.pad.lastChord) {
+      this.layers.pad.synth.triggerAttackRelease(chord, '2n');
+      this.layers.pad.lastChord = chordKey;
+    }
+
+    // === WOLF HOWLS ===
+    if (stats.wolves > 0) {
+      const wolfIntensity = clamp(stats.wolves / this.ideals.wolves, 0.1, 2.5);
+      const howlChance = 0.03 * wolfIntensity;
+      if (Math.random() < howlChance && (now - (this.lastTrigger.wolf || 0)) > 8000) {
+        const pitch = 150 + Math.random() * 130;
+        this.layers.wolf.synth.frequency.value = pitch;
+        this.layers.wolf.synth.frequency.exponentialRampToValueAtTime(pitch * 1.6, Tone.now() + 1.5);
+        this.layers.wolf.synth.volume.value = this._volScale(stats.wolves, this.ideals.wolves, this.layers.wolf.vol);
+        this.layers.wolf.synth.triggerAttackRelease(1.8);
+        this.lastTrigger.wolf = now;
+      }
+    }
+
+    // === ELK BUGLING ===
+    if (stats.elk > 0) {
+      const elkIntensity = clamp(stats.elk / this.ideals.elk, 0.1, 2.5);
+      const bugleChance = 0.02 * elkIntensity;
+      if (Math.random() < bugleChance && (now - (this.lastTrigger.elk || 0)) > 4000) {
+        const note = ['C3', 'D3', 'E3', 'G3'][Math.floor(Math.random() * 4)];
+        this.layers.elk.synth.volume.value = this._volScale(stats.elk, this.ideals.elk, this.layers.elk.vol);
+        this.layers.elk.synth.triggerAttackRelease(note, '8n');
+        this.lastTrigger.elk = now;
+      }
+    }
+
+    // === BIRD CHIRPS (most frequent — the "life" sound) ===
+    if (stats.birds > 0) {
+      const birdIntensity = clamp(stats.birds / this.ideals.birds, 0.1, 2.5);
+      const chirpChance = 0.15 * birdIntensity;
+      if (Math.random() < chirpChance) {
+        const baseNote = 1200 + Math.random() * 1200;
+        this.layers.bird.synth.frequency.value = baseNote;
+        this.layers.bird.synth.volume.value = this._volScale(stats.birds, this.ideals.birds, this.layers.bird.vol);
+        this.layers.bird.synth.triggerAttackRelease('64n');
+        // Sometimes do a quick trill (2-3 rapid chirps)
+        if (Math.random() < 0.3 * birdIntensity) {
+          setTimeout(() => {
+            if (this.initialized && this.enabled) {
+              this.layers.bird.synth.frequency.value = baseNote * 1.15;
+              this.layers.bird.synth.triggerAttackRelease('64n');
+            }
+          }, 80);
+          if (Math.random() < 0.4) {
+            setTimeout(() => {
+              if (this.initialized && this.enabled) {
+                this.layers.bird.synth.frequency.value = baseNote * 1.3;
+                this.layers.bird.synth.triggerAttackRelease('64n');
+              }
+            }, 160);
+          }
+        }
+      }
+    }
+
+    // === COYOTE YIPS ===
+    if (stats.coyotes > 0) {
+      const coyIntensity = clamp(stats.coyotes / this.ideals.coyotes, 0.1, 2.5);
+      const yipChance = 0.04 * coyIntensity;
+      if (Math.random() < yipChance && (now - (this.lastTrigger.coyote || 0)) > 3000) {
+        const yipNote = 400 + Math.random() * 400;
+        this.layers.coyote.synth.frequency.value = yipNote;
+        this.layers.coyote.synth.volume.value = this._volScale(stats.coyotes, this.ideals.coyotes, this.layers.coyote.vol);
+        this.layers.coyote.synth.triggerAttackRelease('16n');
+        // Pack yipping effect when many coyotes
+        if (coyIntensity > 1.3 && Math.random() < 0.5) {
+          setTimeout(() => {
+            if (this.initialized && this.enabled) {
+              this.layers.coyote.synth.frequency.value = yipNote * 1.2;
+              this.layers.coyote.synth.triggerAttackRelease('16n');
+            }
+          }, 120);
+        }
+        this.lastTrigger.coyote = now;
+      }
+    }
+
+    // === BEAVER TAIL SLAPS ===
+    if (stats.beavers > 0) {
+      const beaverChance = 0.012 * clamp(stats.beavers / this.ideals.beavers, 0.1, 2.0);
+      if (Math.random() < beaverChance && (now - (this.lastTrigger.beaver || 0)) > 6000) {
+        this.layers.beaver.noise.triggerAttackRelease('32n');
+        this.lastTrigger.beaver = now;
+      }
+    }
+
+    // === FISH SPLASHES ===
+    if (stats.fish > 0) {
+      const fishChance = 0.02 * clamp(stats.fish / this.ideals.fish, 0.1, 2.0);
+      if (Math.random() < fishChance && (now - (this.lastTrigger.fish || 0)) > 4000) {
+        this.layers.fish.noise.triggerAttackRelease('64n');
+        this.lastTrigger.fish = now;
+      }
+    }
+
+    // === RABBIT SHUFFLES ===
+    if (stats.rabbits > 0) {
+      const rabbitChance = 0.03 * clamp(stats.rabbits / this.ideals.rabbits, 0.1, 2.5);
+      if (Math.random() < rabbitChance && (now - (this.lastTrigger.rabbit || 0)) > 2000) {
+        this.layers.rabbit.noise.triggerAttackRelease('64n');
+        this.lastTrigger.rabbit = now;
+      }
+    }
+
+    // === BEAR GROWLS ===
+    if (stats.bears > 0) {
+      const bearChance = 0.008 * clamp(stats.bears / this.ideals.bears, 0.1, 2.0);
+      if (Math.random() < bearChance && (now - (this.lastTrigger.bear || 0)) > 12000) {
+        const growlPitch = 80 + Math.random() * 70;
+        this.layers.bear.synth.frequency.value = growlPitch;
+        this.layers.bear.synth.volume.value = this._volScale(stats.bears, this.ideals.bears, this.layers.bear.vol);
+        this.layers.bear.synth.triggerAttackRelease(1.0);
+        this.lastTrigger.bear = now;
+      }
+    }
+
+    // === AMBIENT: water volume tracks river health ===
+    const waterVol = this.layers.water.baseVol + (stats.riverHealth / 100) * 8;
+    this.layers.water.noise.volume.value = waterVol;
+
+    // === AMBIENT: wind louder when vegetation gone ===
+    const windVol = this.layers.wind.baseVol + ((100 - stats.vegetationHealth) / 100) * 10;
+    this.layers.wind.noise.volume.value = windVol;
   }
 
   setMute(muted) {
-    this.enabled = !muted;
-    if (this.initialized) {
-      Object.values(this.synths).forEach(s => { if (s) s.volume.value = muted ? -80 : this.masterVolume; });
-      Object.values(this.noises).forEach(n => { if (n) n.volume.value = muted ? -80 : -28; });
+    this.muted = muted;
+    if (this.initialized && this.masterVol) {
+      this.masterVol.volume.value = muted ? -80 : -12;
     }
   }
 }
@@ -3157,10 +3339,17 @@ export default function Simulation() {
   ];
   const introPlayedRef = useRef(false);
 
-  const playIntroNarration = useCallback(() => {
+  const playIntroNarration = useCallback(async () => {
     if (introPlayedRef.current) return;
     introPlayedRef.current = true;
     narrator.init();
+    // Auto-init audio on first interaction
+    if (!audioInit) {
+      try {
+        await soundscape.init();
+        setAudioInit(true);
+      } catch (e) { console.error('Audio init failed:', e); }
+    }
     INTRO_LINES.forEach(({ delay, text }) => {
       setTimeout(() => {
         if (narratorEnabled) {
@@ -3173,7 +3362,7 @@ export default function Simulation() {
         }
       }, delay);
     });
-  }, [narratorEnabled]);
+  }, [narratorEnabled, audioInit]);
 
   // Update insight timer
   useEffect(() => {
