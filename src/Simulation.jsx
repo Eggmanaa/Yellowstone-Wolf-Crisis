@@ -62,7 +62,29 @@ function spawnMultiple(type, count, W, H) {
 // SIMULATION ENGINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function initEcosystem(W, H) {
+function initEcosystem(W, H, mode = "noWolves") {
+  if (mode === "noWolves") {
+    // Default start: 1926 — wolves have been extirpated
+    return {
+      entities: [
+        ...spawnMultiple(ELK, 65, W, H),
+        ...spawnMultiple(TREE, 55, W, H),
+        ...spawnMultiple(BEAVER, 3, W, H),
+        ...spawnMultiple(COYOTE, 18, W, H),
+        ...spawnMultiple(FISH, 12, W, H),
+        ...spawnMultiple(BIRD, 8, W, H),
+        ...spawnMultiple(RABBIT, 18, W, H),
+        ...spawnMultiple(BEAR, 4, W, H),
+      ],
+      W, H, tick: 0, season: 0,
+      vegetationHealth: 38, riverHealth: 42,
+      riverWidth: TERRAIN.riverBaseW + 15,
+      stats: { wolves: 0, elk: 65, trees: 55, beavers: 3, coyotes: 18, fish: 12, birds: 8, rabbits: 18, bears: 4, hunters: 0, vegetationHealth: 38, riverHealth: 42 },
+      history: [], balanceScore: 22,
+      particles: [],
+    };
+  }
+  // "balanced" mode — full healthy ecosystem
   return {
     entities: [
       ...spawnMultiple(WOLF, 12, W, H),
@@ -2705,15 +2727,17 @@ export default function Simulation() {
   const insightCounterRef = useRef({});
   const [canvasSize, setCanvasSize] = useState({ w: 1280, h: 720 });
   const [running, setRunning] = useState(false);
-  const [stats, setStats] = useState({ wolves: 12, elk: 45, trees: 90, beavers: 8, coyotes: 10, fish: 22, birds: 15, rabbits: 28, bears: 6, hunters: 0, vegetationHealth: 85, riverHealth: 90 });
+  const [stats, setStats] = useState({ wolves: 0, elk: 65, trees: 55, beavers: 3, coyotes: 18, fish: 12, birds: 8, rabbits: 18, bears: 4, hunters: 0, vegetationHealth: 38, riverHealth: 42 });
   const [history, setHistory] = useState([]);
-  const [score, setScore] = useState(75);
+  const [score, setScore] = useState(22);
   const [alerts, setAlerts] = useState([]);
   const [selectedTool, setSelectedTool] = useState(WOLF);
   const [chartTab, setChartTab] = useState("predprey");
   const [showHelp, setShowHelp] = useState(true);
   const [showChart, setShowChart] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const [isMobile, setIsMobile] = useState(false);
+  const [isPortrait, setIsPortrait] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [audioInit, setAudioInit] = useState(false);
   const [audioMuted, setAudioMuted] = useState(false);
@@ -2758,10 +2782,28 @@ export default function Simulation() {
     return () => resizeObserver.disconnect();
   }, []);
 
+  // Detect mobile and orientation
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 1024 || ('ontouchstart' in window);
+      const portrait = window.innerHeight > window.innerWidth;
+      setIsMobile(mobile);
+      setIsPortrait(portrait);
+      if (mobile) setPanelCollapsed(true);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    window.addEventListener('orientationchange', () => setTimeout(checkMobile, 100));
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+      window.removeEventListener('orientationchange', checkMobile);
+    };
+  }, []);
+
   // Init ecosystem when canvas size is known
   useEffect(() => {
     if (!ecoRef.current && canvasSize.w > 0) {
-      ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h);
+      ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h, "noWolves");
       const ctx = canvasRef.current?.getContext("2d");
       if (ctx) renderEcosystem(ctx, ecoRef.current);
     }
@@ -2890,11 +2932,11 @@ export default function Simulation() {
     cancelAnimationFrame(animRef.current);
     setRunning(false);
     narrator.stop();
-    ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h);
+    ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h, "noWolves");
     const eco = ecoRef.current;
     setStats(eco.stats);
     setHistory([]);
-    setScore(75);
+    setScore(eco.balanceScore);
     setAlerts([]);
     setGameState("ready");
     setGameTimer(0);
@@ -2918,29 +2960,42 @@ export default function Simulation() {
   };
 
   const handlePreset = (preset) => {
-    handleReset();
+    cancelAnimationFrame(animRef.current);
+    setRunning(false);
+    narrator.stop();
+    setGameState("ready");
+    setGameTimer(0);
+    setHealthyStreak(0);
+    gameTimerRef.current = 0;
+    healthyStreakRef.current = 0;
+
+    const mode = preset === "balanced" ? "balanced" : "noWolves";
+    ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h, mode);
     const eco = ecoRef.current;
-    if (!eco) return;
     const { W: cw, H: ch } = eco;
+
     if (preset === "noWolves") {
-      eco.entities = eco.entities.filter(e => e.type !== WOLF);
-      for (let i = 0; i < 35; i++) eco.entities.push(createEntity(ELK, null, null, cw, ch));
+      // Already set up by initEcosystem("noWolves")
     } else if (preset === "heavyHunting") {
       for (let i = 0; i < 12; i++) eco.entities.push(createEntity(HUNTER, null, null, cw, ch));
     } else if (preset === "recovery") {
+      // Degraded ecosystem with wolves just reintroduced
       eco.entities = eco.entities.filter(e => e.type !== WOLF);
       eco.entities = eco.entities.filter(e => {
-        if (e.type === TREE) return Math.random() > 0.6;
-        if (e.type === BEAVER) return Math.random() > 0.8;
-        if (e.type === BIRD) return Math.random() > 0.7;
-        if (e.type === FISH) return Math.random() > 0.6;
+        if (e.type === TREE) return Math.random() > 0.5;
+        if (e.type === BEAVER) return Math.random() > 0.7;
+        if (e.type === BIRD) return Math.random() > 0.6;
+        if (e.type === FISH) return Math.random() > 0.5;
         return true;
       });
-      for (let i = 0; i < 45; i++) eco.entities.push(createEntity(ELK, null, null, cw, ch));
-      for (let i = 0; i < 18; i++) eco.entities.push(createEntity(COYOTE, null, null, cw, ch));
       eco.vegetationHealth = 25; eco.riverHealth = 30;
       for (let i = 0; i < 14; i++) eco.entities.push(createEntity(WOLF, null, null, cw, ch));
     }
+
+    setStats(eco.stats);
+    setHistory([]);
+    setScore(eco.balanceScore);
+    setAlerts([]);
     const ctx = canvasRef.current?.getContext("2d");
     if (ctx) { ctx.clearRect(0, 0, eco.W, eco.H); renderEcosystem(ctx, eco); }
     recountStats(eco);
@@ -2971,6 +3026,34 @@ export default function Simulation() {
   // Init narrator on mount
   useEffect(() => { narrator.init(); }, []);
 
+  // ─── INTRO NARRATION SEQUENCE ──────────────────────────────────────
+  const INTRO_LINES = [
+    { delay: 0, text: "Welcome to Yellowstone, 1926. The last wolf has just been killed." },
+    { delay: 8000, text: "For decades, the government hunted every wolf in the park to protect livestock. Now the ecosystem is paying the price." },
+    { delay: 18000, text: "Without wolves, elk are multiplying unchecked. They are devouring the willows and aspens that hold the riverbanks together." },
+    { delay: 28000, text: "Your mission: restore this ecosystem. Add wolves and other species to bring the food web back into balance." },
+    { delay: 37000, text: "Reach a balance score of 75 and hold it for 20 seconds to win. Good luck, ranger." },
+  ];
+  const introPlayedRef = useRef(false);
+
+  const playIntroNarration = useCallback(() => {
+    if (introPlayedRef.current) return;
+    introPlayedRef.current = true;
+    narrator.init();
+    INTRO_LINES.forEach(({ delay, text }) => {
+      setTimeout(() => {
+        if (narratorEnabled) {
+          narrator.speak('intro_' + delay, text);
+          setSpokenSubtitle(text);
+          setNarratorActive(true);
+          setTimeout(() => setNarratorActive(false), 6000);
+          // Clear subtitle after line duration
+          setTimeout(() => setSpokenSubtitle(prev => prev === text ? null : prev), 9000);
+        }
+      }, delay);
+    });
+  }, [narratorEnabled]);
+
   // Update insight timer
   useEffect(() => {
     if (insightTimer > 0) {
@@ -2988,19 +3071,40 @@ export default function Simulation() {
 
   const selectedInfo = SPECIES.find(s => s.type === selectedTool);
 
-  // ─── STYLES ──────────────────────────────────────────────────────────
+  // ─── STYLES (mobile-responsive) ──────────────────────────────────────
+  const m = isMobile;
   const S = {
     root: { width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: "#0a0f1a", overflow: "hidden", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: "#e2e8f0", position: "relative" },
-    topBar: { display: "flex", alignItems: "center", gap: 10, padding: "8px 16px", background: "#0f172a", borderBottom: "1px solid #1e293b", flexShrink: 0, height: 40, zIndex: 10 },
+    topBar: { display: "flex", alignItems: "center", gap: m ? 4 : 10, padding: m ? "4px 8px" : "8px 16px", background: "#0f172a", borderBottom: "1px solid #1e293b", flexShrink: 0, height: m ? 34 : 40, zIndex: 10, overflowX: m ? "auto" : "visible", overflowY: "hidden", WebkitOverflowScrolling: "touch" },
     main: { flex: 1, display: "flex", overflow: "hidden", position: "relative", minHeight: 0 },
-    panel: { width: panelCollapsed ? 44 : 200, background: "#0f172a", borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0, transition: "width 0.2s ease", overflow: "hidden", zIndex: 5 },
+    panel: { width: panelCollapsed ? (m ? 0 : 44) : (m ? 150 : 200), background: "#0f172a", borderRight: panelCollapsed && m ? "none" : "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0, transition: "width 0.2s ease", overflow: "hidden", zIndex: 5 },
     canvasWrap: { flex: 1, position: "relative", overflow: "hidden", minHeight: 0, minWidth: 0 },
-    btn: (active, color) => ({ padding: "4px 12px", borderRadius: 6, border: active ? `1px solid ${color}` : "1px solid #334155", background: active ? `${color}20` : "transparent", color: active ? color : "#94a3b8", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }),
-    btnSolid: (bg) => ({ padding: "6px 14px", borderRadius: 6, border: "none", background: bg, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }),
+    btn: (active, color) => ({ padding: m ? "4px 8px" : "4px 12px", borderRadius: 6, border: active ? `1px solid ${color}` : "1px solid #334155", background: active ? `${color}20` : "transparent", color: active ? color : "#94a3b8", fontSize: m ? 10 : 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: m ? 28 : "auto" }),
+    btnSolid: (bg) => ({ padding: m ? "5px 10px" : "6px 14px", borderRadius: 6, border: "none", background: bg, color: "#fff", fontSize: m ? 11 : 12, fontWeight: 700, cursor: "pointer", minHeight: m ? 28 : "auto" }),
   };
 
   return (
     <div style={S.root}>
+      {/* ═══ PORTRAIT ORIENTATION LOCK ═══ */}
+      {isMobile && isPortrait && (
+        <div style={{
+          position: "fixed", inset: 0, background: "#0a0f1a", zIndex: 9999,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          padding: 40, textAlign: "center",
+        }}>
+          <div style={{ fontSize: 60, marginBottom: 20, animation: "rotatePhone 2s ease-in-out infinite" }}>📱</div>
+          <h2 style={{ fontSize: 22, fontWeight: 800, margin: "0 0 12px", background: "linear-gradient(135deg, #60a5fa, #34d399)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+            Rotate Your Phone
+          </h2>
+          <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.6, maxWidth: 300 }}>
+            Turn your device to <strong style={{ color: "#e2e8f0" }}>landscape mode</strong> for the best experience. The Yellowstone ecosystem needs room to breathe.
+          </p>
+          <div style={{ marginTop: 24, padding: "10px 20px", background: "#1e293b", borderRadius: 8, border: "1px solid #334155" }}>
+            <span style={{ fontSize: 28, display: "block", transform: "rotate(-90deg)" }}>↑</span>
+          </div>
+        </div>
+      )}
+
       {/* ═══ TOP BAR ═══ */}
       <div style={S.topBar}>
         <div style={{ fontSize: 14, fontWeight: 800, background: "linear-gradient(135deg, #60a5fa, #34d399)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
@@ -3059,33 +3163,37 @@ export default function Simulation() {
 
         <div style={{ flex: 1 }} />
 
-        {/* Scenarios */}
-        <span style={{ fontSize: 10, color: "#475569" }}>Scenarios:</span>
-        <button onClick={() => handlePreset("balanced")} style={S.btn(false, "#22c55e")}>Balanced</button>
-        <button onClick={() => handlePreset("noWolves")} style={S.btn(false, "#ef4444")}>No Wolves</button>
-        <button onClick={() => handlePreset("heavyHunting")} style={S.btn(false, "#f97316")}>Heavy Hunt</button>
-        <button onClick={() => handlePreset("recovery")} style={S.btn(false, "#3b82f6")}>Recovery</button>
+        {/* Scenarios — hidden on mobile, shown on desktop */}
+        {!m && <>
+          <span style={{ fontSize: 10, color: "#475569" }}>Scenarios:</span>
+          <button onClick={() => handlePreset("balanced")} style={S.btn(false, "#22c55e")}>Balanced</button>
+          <button onClick={() => handlePreset("noWolves")} style={S.btn(false, "#ef4444")}>No Wolves</button>
+          <button onClick={() => handlePreset("heavyHunting")} style={S.btn(false, "#f97316")}>Heavy Hunt</button>
+          <button onClick={() => handlePreset("recovery")} style={S.btn(false, "#3b82f6")}>Recovery</button>
+        </>}
 
         <button onClick={handleAudioToggle} style={S.btn(audioInit, "#a78bfa")} title={audioInit ? (audioMuted ? 'Unmute' : 'Mute') : 'Click for sound'}>
-          {audioInit ? (audioMuted ? '🔇' : '🔊') : '🔇'} Sound
+          {audioInit ? (audioMuted ? '🔇' : '🔊') : '🔇'}{!m && ' Sound'}
         </button>
         <button onClick={handleNarratorToggle} style={{ ...S.btn(narratorEnabled, "#f472b6"), position: "relative" }} title={narratorEnabled ? 'Mute narrator' : 'Enable narrator'}>
-          {narratorEnabled ? '🎙️' : '🔕'} Narrator
+          {narratorEnabled ? '🎙️' : '🔕'}{!m && ' Narrator'}
           {narratorActive && narratorEnabled && <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, borderRadius: "50%", background: "#f472b6", animation: "pulse 1s infinite" }} />}
         </button>
-        <button onClick={() => setShowWeb(!showWeb)} style={S.btn(showWeb, "#fb923c")}>🕸️ Web</button>
-        <button onClick={() => setShowLearn(!showLearn)} style={S.btn(showLearn, "#60a5fa")}>📚 Learn</button>
-        <button onClick={() => setShowChart(!showChart)} style={S.btn(showChart, "#60a5fa")}>📊</button>
-        <button onClick={() => setShowHelp(true)} style={S.btn(false, "#64748b")}>?</button>
+        {!m && <button onClick={() => setShowWeb(!showWeb)} style={S.btn(showWeb, "#fb923c")}>🕸️ Web</button>}
+        {!m && <button onClick={() => setShowLearn(!showLearn)} style={S.btn(showLearn, "#60a5fa")}>📚 Learn</button>}
+        {!m && <button onClick={() => setShowChart(!showChart)} style={S.btn(showChart, "#60a5fa")}>📊</button>}
+        <button onClick={() => { if (m) setPanelCollapsed(!panelCollapsed); else setShowHelp(true); }} style={S.btn(false, "#64748b")}>{m ? (panelCollapsed ? '☰' : '✕') : '?'}</button>
       </div>
 
       {/* ═══ MAIN AREA ═══ */}
       <div style={S.main}>
         {/* ─── Left Panel ─── */}
         <div style={S.panel}>
-          <button onClick={() => setPanelCollapsed(!panelCollapsed)} style={{ background: "transparent", border: "none", color: "#64748b", padding: "8px", cursor: "pointer", fontSize: 14, textAlign: "center" }}>
-            {panelCollapsed ? "▸" : "◂"}
-          </button>
+          {!m && (
+            <button onClick={() => setPanelCollapsed(!panelCollapsed)} style={{ background: "transparent", border: "none", color: "#64748b", padding: "8px", cursor: "pointer", fontSize: 14, textAlign: "center" }}>
+              {panelCollapsed ? "▸" : "◂"}
+            </button>
+          )}
 
           {!panelCollapsed && (
             <>
@@ -3190,14 +3298,14 @@ export default function Simulation() {
           {/* Narrator subtitle bar */}
           {spokenSubtitle && narratorEnabled && (
             <div style={{
-              position: "absolute", bottom: alerts.length > 0 ? 80 : 16, left: "50%", transform: "translateX(-50%)",
-              maxWidth: "70%", background: "rgba(0,0,0,0.82)", borderRadius: 10, padding: "10px 20px",
+              position: "absolute", bottom: alerts.length > 0 ? (m ? 50 : 80) : (m ? 8 : 16), left: "50%", transform: "translateX(-50%)",
+              maxWidth: m ? "92%" : "70%", background: "rgba(0,0,0,0.82)", borderRadius: m ? 8 : 10, padding: m ? "6px 12px" : "10px 20px",
               border: "1px solid rgba(244,114,182,0.3)", backdropFilter: "blur(8px)", zIndex: 5, pointerEvents: "none",
               animation: "subtitleFadeIn 0.4s ease-out",
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 14 }}>🎙️</span>
-                <span style={{ fontSize: 12, color: "#f1f5f9", lineHeight: 1.5, fontStyle: "italic" }}>{spokenSubtitle}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: m ? 11 : 14 }}>🎙️</span>
+                <span style={{ fontSize: m ? 10 : 12, color: "#f1f5f9", lineHeight: 1.4, fontStyle: "italic" }}>{spokenSubtitle}</span>
               </div>
             </div>
           )}
@@ -3373,26 +3481,28 @@ export default function Simulation() {
         </div>
       )}
 
-      {/* ═══ HELP MODAL ═══ */}
+      {/* ═══ INTRO / HELP MODAL ═══ */}
       {showHelp && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setShowHelp(false)}>
-          <div style={{ background: "#1e293b", borderRadius: 16, padding: 28, maxWidth: 540, margin: 20, border: "1px solid #334155" }} onClick={e => e.stopPropagation()}>
-            <h2 style={{ fontSize: 22, fontWeight: 800, margin: "0 0 12px", background: "linear-gradient(135deg, #60a5fa, #34d399)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-              Yellowstone Trophic Cascade
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => { setShowHelp(false); playIntroNarration(); }}>
+          <div style={{ background: "linear-gradient(135deg, #0f172a, #1e293b)", borderRadius: 16, padding: "28px 28px 20px", maxWidth: 500, margin: 16, border: "1px solid #334155", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>🐺🏔️</div>
+            <h2 style={{ fontSize: 20, fontWeight: 800, margin: "0 0 6px", background: "linear-gradient(135deg, #ef4444, #f97316)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              Yellowstone, 1926
             </h2>
-            <div style={{ fontSize: 13, lineHeight: 1.7, color: "#cbd5e1" }}>
-              <p style={{ margin: "0 0 10px" }}><strong>The Challenge:</strong> Restore Yellowstone's ecosystem to balance (score {WIN_THRESHOLD}+) and hold it there for {Math.round(WIN_STREAK_NEEDED / 60)} seconds — all within {Math.round(GAME_DURATION / 60)} seconds.</p>
-              <p style={{ margin: "0 0 10px" }}><strong>Select a species</strong> from the left panel and <strong>click the ecosystem</strong> to add them. Each species you introduce ripples through the entire food web.</p>
-              <p style={{ margin: "0 0 10px" }}><strong>Hit Start Challenge</strong> and watch the cascade unfold. Wolves hunt elk, elk graze trees, trees stabilize rivers, rivers support fish and beavers.</p>
-              <p style={{ margin: "0 0 10px" }}><strong>Hunters appear automatically</strong> based on wolf population — just like real history. Try the scenarios to see different starting conditions.</p>
-              <p style={{ margin: "0 0 8px", padding: "8px 12px", background: "#0f172a", borderRadius: 8, fontSize: 12 }}>
+            <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 14px", fontStyle: "italic" }}>The last wolf has been killed.</p>
+
+            <div style={{ fontSize: 12, lineHeight: 1.7, color: "#cbd5e1", textAlign: "left" }}>
+              <p style={{ margin: "0 0 10px" }}>The U.S. government has systematically exterminated every wolf in Yellowstone. Elk herds are exploding, devouring the willows and aspens. Rivers are eroding. The ecosystem is collapsing.</p>
+              <p style={{ margin: "0 0 10px" }}><strong style={{ color: "#60a5fa" }}>Your mission:</strong> Restore the ecosystem by reintroducing species. Reach a balance score of <strong>{WIN_THRESHOLD}+</strong> and hold it for <strong>{Math.round(WIN_STREAK_NEEDED / 60)}s</strong> to win.</p>
+              <p style={{ margin: "0 0 10px", padding: "8px 12px", background: "#0f172a", borderRadius: 8, fontSize: 11 }}>
                 <strong style={{ color: "#60a5fa" }}>The Cascade:</strong> Wolves → Elk → Vegetation → Rivers → Beavers/Fish/Songbirds
                 <br />
                 <strong style={{ color: "#f97316" }}>Side Effect:</strong> No wolves → Coyote boom → Rabbit/bird decline
               </p>
+              <p style={{ margin: "0 0 6px", fontSize: 11, color: "#64748b" }}>Select species from the panel, click the map to add them. Tap <strong>Start Challenge</strong> to begin the timer.</p>
             </div>
-            <button onClick={() => setShowHelp(false)} style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", marginTop: 8 }}>
-              Start Exploring
+            <button onClick={() => { setShowHelp(false); playIntroNarration(); }} style={{ width: "100%", padding: "12px 0", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer", marginTop: 10 }}>
+              Begin Restoration
             </button>
           </div>
         </div>
