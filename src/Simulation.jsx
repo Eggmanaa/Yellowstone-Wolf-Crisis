@@ -2028,7 +2028,11 @@ class SoundscapeManager {
 
   async init() {
     if (this.initialized) return;
+    // Ensure AudioContext is running (may already be resumed by gesture handler)
     await Tone.start();
+    if (Tone.context.state !== 'running') {
+      await Tone.context.resume();
+    }
 
     this.masterVol = new Tone.Volume(-12).toDestination();
 
@@ -3088,7 +3092,10 @@ export default function Simulation() {
   // Detect mobile and orientation
   useEffect(() => {
     const checkMobile = () => {
-      const mobile = window.innerWidth < 900 || ('ontouchstart' in window && window.innerWidth < 1200);
+      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      const isSmallScreen = window.innerWidth < 900;
+      const isTablet = hasTouch && window.innerWidth < 1400;
+      const mobile = isSmallScreen || isTablet;
       const portrait = window.innerHeight > window.innerWidth;
       setIsMobile(mobile);
       setIsPortrait(portrait);
@@ -3307,6 +3314,10 @@ export default function Simulation() {
   const handleAudioToggle = async () => {
     if (!audioInit) {
       try {
+        // Resume context synchronously for iOS
+        if (typeof Tone !== 'undefined' && Tone.context) {
+          Tone.context.resume();
+        }
         await soundscape.init();
         setAudioInit(true);
       } catch (e) {
@@ -3339,16 +3350,19 @@ export default function Simulation() {
   ];
   const introPlayedRef = useRef(false);
 
-  const playIntroNarration = useCallback(async () => {
+  const playIntroNarration = useCallback(() => {
     if (introPlayedRef.current) return;
     introPlayedRef.current = true;
     narrator.init();
-    // Auto-init audio on first interaction
+    // Init audio — MUST call Tone.start() synchronously within gesture for iOS/Safari
     if (!audioInit) {
-      try {
-        await soundscape.init();
+      // Synchronously create/resume AudioContext in the gesture handler
+      if (typeof Tone !== 'undefined' && Tone.context && Tone.context.state !== 'running') {
+        Tone.context.resume();
+      }
+      soundscape.init().then(() => {
         setAudioInit(true);
-      } catch (e) { console.error('Audio init failed:', e); }
+      }).catch(e => console.error('Audio init failed:', e));
     }
     INTRO_LINES.forEach(({ delay, text }) => {
       setTimeout(() => {
@@ -3600,7 +3614,7 @@ export default function Simulation() {
             width={canvasSize.w}
             height={canvasSize.h}
             onClick={handleCanvasClick}
-            style={{ display: "block", cursor: "crosshair", imageRendering: "crisp-edges" }}
+            style={{ display: "block", width: "100%", height: "100%", cursor: "crosshair", imageRendering: "crisp-edges" }}
           />
 
           {/* Tool cursor label + compact HUD */}
@@ -3793,8 +3807,9 @@ export default function Simulation() {
                   title={`${sp.label} (${stats[sp.key] ?? 0})`}
                 >{sp.icon}</button>
               ))}
-              <div style={{ display: "flex", alignItems: "center", gap: 3, padding: "0 6px", borderLeft: "1px solid #334155", fontSize: 10, color: "#64748b" }}>
-                🎯 {stats.hunters ?? 0}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 6px", borderLeft: "1px solid #334155", fontSize: 10, color: "#64748b" }}>
+                <span>🌲 {stats.trees ?? 0}</span>
+                <span>🎯 {stats.hunters ?? 0}</span>
               </div>
             </div>
           )}
