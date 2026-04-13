@@ -2315,37 +2315,26 @@ class NarratorManager {
   constructor() {
     this.enabled = true;
     this.speaking = false;
-    this.queue = [];
     this.lastSpoken = {};
     this.minInterval = 20000; // 20s between same insight
     this.globalCooldown = 8000; // 8s between any narration
     this.lastAnySpoken = 0;
-    this.voice = null;
-    this.initialized = false;
+    this.currentAudio = null;
+    this.audioCache = {};
+    this.initialized = true; // No init needed for HTML5 Audio
   }
 
   init() {
-    if (this.initialized || !window.speechSynthesis) return;
-    // Pick a calm, clear voice
-    const pickVoice = () => {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length === 0) return;
-      // Prefer English voices with "natural" or "Google" or "Samantha"
-      this.voice = voices.find(v => /samantha|google.*us|natural|daniel/i.test(v.name) && /en/i.test(v.lang))
-        || voices.find(v => /en[-_]us/i.test(v.lang))
-        || voices.find(v => /en/i.test(v.lang))
-        || voices[0];
-      this.initialized = true;
-    };
-    pickVoice();
-    if (!this.initialized) {
-      window.speechSynthesis.onvoiceschanged = pickVoice;
-    }
+    // No-op: HTML5 Audio doesn't need initialization
+    this.initialized = true;
   }
 
-  speak(insightId, text) {
-    if (!this.enabled || !window.speechSynthesis) return;
-    if (!this.initialized) this.init();
+  _getAudioUrl(filename) {
+    return `/audio/${filename}`;
+  }
+
+  speak(insightId, text, audioFile) {
+    if (!this.enabled) return;
 
     const now = Date.now();
     // Global cooldown
@@ -2353,34 +2342,49 @@ class NarratorManager {
     // Per-insight cooldown
     if (this.lastSpoken[insightId] && now - this.lastSpoken[insightId] < this.minInterval) return;
 
-    // Cancel any current speech to keep things snappy
-    window.speechSynthesis.cancel();
+    // Stop any current audio
+    if (this.currentAudio) {
+      this.currentAudio.pause();
+      this.currentAudio.currentTime = 0;
+      this.currentAudio = null;
+    }
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.92;
-    utterance.pitch = 1.0;
-    utterance.volume = 0.85;
-    if (this.voice) utterance.voice = this.voice;
+    // If we have a pre-generated audio file, use it
+    if (audioFile) {
+      const url = this._getAudioUrl(audioFile);
+      let audio = this.audioCache[url];
+      if (!audio) {
+        audio = new Audio(url);
+        audio.preload = 'auto';
+        this.audioCache[url] = audio;
+      } else {
+        audio.currentTime = 0;
+      }
+      audio.volume = 0.85;
+      this.currentAudio = audio;
+      this.speaking = true;
+      audio.play().catch(() => { this.speaking = false; });
+      audio.onended = () => { this.speaking = false; this.currentAudio = null; };
+      audio.onerror = () => { this.speaking = false; this.currentAudio = null; };
+    }
 
-    utterance.onstart = () => { this.speaking = true; };
-    utterance.onend = () => { this.speaking = false; };
-    utterance.onerror = () => { this.speaking = false; };
-
-    window.speechSynthesis.speak(utterance);
     this.lastSpoken[insightId] = now;
     this.lastAnySpoken = now;
   }
 
   setEnabled(on) {
     this.enabled = on;
-    if (!on && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-      this.speaking = false;
+    if (!on) {
+      this.stop();
     }
   }
 
   stop() {
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (this.currentAudio) {
+      this.currentAudio.pause();
+      this.currentAudio.currentTime = 0;
+      this.currentAudio = null;
+    }
     this.speaking = false;
   }
 }
@@ -2403,6 +2407,7 @@ const INSIGHTS = [
       'No more wolves. The top of the food chain just collapsed. Watch how every species below them starts to unravel.',
       'This is exactly what happened in Yellowstone in 1926. Every wolf was killed, and the whole ecosystem paid the price for 70 years.',
     ],
+    audioFiles: ["wolves_extinct_0.mp3","wolves_extinct_1.mp3","wolves_extinct_2.mp3"],
     concept: 'Trophic Cascade',
     conceptDetail: 'Changes at the top of the food chain cascade down, dramatically altering lower trophic levels.',
     historicalNote: 'This happened in Yellowstone 1926-1995: after wolves were extirpated, elk populations surged from ~4,000 to over 25,000.',
@@ -2419,6 +2424,7 @@ const INSIGHTS = [
       'The wolf population is critically low. Without enough members to form stable packs, reproduction slows and inbreeding becomes a real threat.',
       'We are looking at a genetic bottleneck. When a population drops this low, even small setbacks can push them to extinction.',
     ],
+    audioFiles: ["wolves_critical_0.mp3","wolves_critical_1.mp3","wolves_critical_2.mp3"],
     concept: 'Population Genetics',
     conceptDetail: 'Small populations lose genetic diversity, making them vulnerable to disease and environmental stress.',
     historicalNote: 'Real Yellowstone reintroduction began with just 14 wolves (from Canada) in 1995-96.',
@@ -2435,6 +2441,7 @@ const INSIGHTS = [
       'This is what a keystone species looks like. Wolves support far more life than their numbers suggest — the whole web depends on them.',
       'Healthy wolf packs are patrolling the valleys. Elk are steering clear of the riverbanks, and that gives the willows a chance to recover.',
     ],
+    audioFiles: ["wolves_healthy_0.mp3","wolves_healthy_1.mp3","wolves_healthy_2.mp3"],
     concept: 'Keystone Species',
     conceptDetail: 'A species whose impact on the ecosystem is disproportionately large relative to its abundance.',
     historicalNote: 'Yellowstone wolves have supported recovery of willows, aspen, cottonwoods, and enabled beaver return.',
@@ -2451,6 +2458,7 @@ const INSIGHTS = [
       'Predator overpopulation. In nature this self-corrects through starvation, but it is a painful process that takes the whole ecosystem down with it.',
       'The wolf population has overshot. This is the boom side of a classic predator-prey cycle. The bust is coming.',
     ],
+    audioFiles: ["wolves_overpop_0.mp3","wolves_overpop_1.mp3","wolves_overpop_2.mp3"],
     concept: 'Predator-Prey Dynamics',
     conceptDetail: 'Predator and prey populations oscillate cyclically: more prey → more predators → predators eat prey → fewer predators.',
     historicalNote: 'Yellowstone\'s wolf population stabilized around 80-110 by 2000s, with natural predator-prey balance.',
@@ -2467,6 +2475,7 @@ const INSIGHTS = [
       'This is what carrying capacity looks like when it is exceeded. The elk are eating themselves out of house and home.',
       'Massive overgrazing. In the real Yellowstone, 25,000 elk stripped the park bare for decades. This is that same story playing out.',
     ],
+    audioFiles: ["elk_overpop_0.mp3","elk_overpop_1.mp3","elk_overpop_2.mp3"],
     concept: 'Carrying Capacity',
     conceptDetail: 'The maximum population size an environment can sustain based on available resources.',
     historicalNote: 'Pre-wolf Yellowstone had 25,000+ elk destroying all woody vegetation; now stabilized at 4,000-8,000 with wolves.',
@@ -2483,6 +2492,7 @@ const INSIGHTS = [
       'The elk are rising and predation pressure is not keeping up. This is the early warning sign before vegetation collapse.',
       'Not enough wolves to hold the elk back. If this continues, the trees will not survive the browsing pressure.',
     ],
+    audioFiles: ["elk_rising_0.mp3","elk_rising_1.mp3","elk_rising_2.mp3"],
     concept: 'Predator-Prey Equilibrium',
     conceptDetail: 'Stable ecosystems maintain balance between predator and prey through density-dependent predation.',
     historicalNote: 'Yellowstone achieved balance around 2000-2010, with 50-80 wolves keeping elk at sustainable levels.',
@@ -2499,6 +2509,7 @@ const INSIGHTS = [
       'Notice the elk are not just being killed by wolves — they are changing their behavior. Fear itself reshapes the landscape.',
       'Wolves do not just reduce elk numbers. They move them. And that redistribution of grazing pressure is what lets the vegetation recover.',
     ],
+    audioFiles: ["elk_balanced_0.mp3","elk_balanced_1.mp3","elk_balanced_2.mp3"],
     concept: 'Ecology of Fear',
     conceptDetail: 'Predator presence alters prey behavior (e.g., habitat use, foraging patterns) independent of predation mortality.',
     historicalNote: 'GPS-collared Yellowstone elk avoid river valleys 4-5x more often when wolves are present.',
@@ -2515,6 +2526,7 @@ const INSIGHTS = [
       'The trees are gone. This triggers a domino effect: no roots means eroding banks, no shade means warming rivers, no cover means declining wildlife.',
       'Yellowstone willows declined 99 percent between the 1920s and 1990s. You are watching the same pattern unfold right now.',
     ],
+    audioFiles: ["vegetation_collapse_0.mp3","vegetation_collapse_1.mp3","vegetation_collapse_2.mp3"],
     concept: 'Ecosystem Engineer',
     conceptDetail: 'Species that create or maintain habitats, enabling other species to thrive (e.g., willows stabilize banks).',
     historicalNote: 'Yellowstone willows declined 99% from 1920s-1990s; recovery began only after wolf reintroduction.',
@@ -2531,6 +2543,7 @@ const INSIGHTS = [
       'Ecological succession is underway. The vegetation is slowly rebuilding, and with it, the entire food web gets stronger.',
       'Recovery is happening. Each tree that grows back holds a little more soil, shades a little more water, and shelters a few more birds.',
     ],
+    audioFiles: ["vegetation_recovering_0.mp3","vegetation_recovering_1.mp3","vegetation_recovering_2.mp3"],
     concept: 'Ecological Succession',
     conceptDetail: 'The predictable sequence of species and ecosystem changes following disturbance or restoration.',
     historicalNote: 'Yellowstone aspen recovery accelerated 5-10 years after wolf reintroduction reduced elk browse.',
@@ -2547,6 +2560,7 @@ const INSIGHTS = [
       'The riparian zone is collapsing. These riverside ecosystems are among the most productive on earth, and they are disappearing.',
       'River channels are braiding and widening — a classic sign of ecosystem degradation. Pre-wolf Yellowstone looked exactly like this.',
     ],
+    audioFiles: ["river_unstable_0.mp3","river_unstable_1.mp3","river_unstable_2.mp3"],
     concept: 'Riparian Zone',
     conceptDetail: 'Transitional areas between terrestrial and aquatic ecosystems that regulate water quality, temperature, and structure.',
     historicalNote: 'Pre-wolf Yellowstone had braided, eroded channels; post-wolf recovery includes narrower, deeper streams with better structure.',
@@ -2563,6 +2577,7 @@ const INSIGHTS = [
       'No willows, no beavers. No beavers, no dams. No dams, no wetlands. The cascade keeps going deeper.',
       'Yellowstone went from 9,000 beaver ponds to nearly zero when the willows disappeared. You are seeing that same collapse.',
     ],
+    audioFiles: ["beaver_decline_0.mp3","beaver_decline_1.mp3","beaver_decline_2.mp3"],
     concept: 'Ecosystem Engineering',
     conceptDetail: 'Beavers are the ultimate ecosystem engineers, creating wetlands that support fish, waterfowl, and vegetation.',
     historicalNote: 'Yellowstone had ~9,000 beaver ponds in 1800s, crashed to near zero by 1950s, now recovering toward ~4,000+.',
@@ -2579,6 +2594,7 @@ const INSIGHTS = [
       'One beaver family can transform an entire valley. Their dams create ponds that support fish, amphibians, waterfowl, and dozens of insect species.',
       'Beaver engineering at its finest. These rodents reshape rivers more effectively than any human construction project.',
     ],
+    audioFiles: ["beaver_returning_0.mp3","beaver_returning_1.mp3","beaver_returning_2.mp3"],
     concept: 'Ecosystem Engineer',
     conceptDetail: 'Beavers modify their environment more dramatically than any species except humans.',
     historicalNote: 'Beaver ponds in restored Yellowstone create oases of biodiversity in otherwise dry landscapes.',
@@ -2595,6 +2611,7 @@ const INSIGHTS = [
       'Birds are an indicator species. When they decline, it means the whole ecosystem is stressed. No trees, no nests, no birds.',
       'The silence is telling. In a healthy Yellowstone, you would hear dozens of bird species. When the trees go, the songs go with them.',
     ],
+    audioFiles: ["songbird_decline_0.mp3","songbird_decline_1.mp3","songbird_decline_2.mp3"],
     concept: 'Indicator Species',
     conceptDetail: 'Species whose presence or abundance reflects ecosystem health; used to monitor environmental conditions.',
     historicalNote: 'Yellowstone songbird diversity increased after wolves returned and willows regrew.',
@@ -2611,6 +2628,7 @@ const INSIGHTS = [
       'Mesopredator release in action. Remove the top predator and the mid-level ones explode. Coyotes are now the unchecked force in this ecosystem.',
       'From 1926 to 1995, Yellowstone coyote populations ran rampant with no wolf control. Rabbits and ground-nesting birds paid the price.',
     ],
+    audioFiles: ["coyote_boom_0.mp3","coyote_boom_1.mp3","coyote_boom_2.mp3"],
     concept: 'Mesopredator Release',
     conceptDetail: 'When apex predators are removed, mid-level predators increase dramatically and overexploit prey.',
     historicalNote: 'Yellowstone coyote populations exploded 1926-1995; wolf return naturally suppressed coyote numbers.',
@@ -2627,6 +2645,7 @@ const INSIGHTS = [
       'Another level of the food web has collapsed. Rabbits are victims of the same cascade that started with losing wolves.',
       'Small mammals crashing. This is a secondary trophic effect — the consequences of removing wolves reach species three or four links down the chain.',
     ],
+    audioFiles: ["rabbit_crash_0.mp3","rabbit_crash_1.mp3","rabbit_crash_2.mp3"],
     concept: 'Cascading Trophic Effects',
     conceptDetail: 'Changes in one species ripple through the food web, affecting multiple trophic levels.',
     historicalNote: 'Small mammal populations in Yellowstone showed strong recovery correlating with wolf presence.',
@@ -2643,6 +2662,7 @@ const INSIGHTS = [
       'Coyote suppression by wolves. This actually happened when wolves returned to Yellowstone. Small prey species boomed in response.',
       'The coyote population has collapsed under wolf pressure. Nature will compensate — expect a rabbit boom and shifts in ground-level vegetation.',
     ],
+    audioFiles: ["coyote_suppressed_0.mp3"],
     concept: 'Intraguild Predation',
     conceptDetail: 'When apex predators suppress or kill mesopredators, releasing pressure on smaller prey species.',
     historicalNote: 'Yellowstone coyote numbers dropped by 50% within two years of wolf reintroduction in 1995.',
@@ -2659,6 +2679,7 @@ const INSIGHTS = [
       'No coyotes at all. This is actually worse than it sounds. Every level of the food web plays a role, and this gap will ripple through the ecosystem.',
       'Complete coyote loss. In a healthy ecosystem, mesopredators like coyotes keep small mammals in check. Without them, expect cascading overpopulation below.',
     ],
+    audioFiles: ["coyote_extinct_0.mp3"],
     concept: 'Food Web Completeness',
     conceptDetail: 'A healthy ecosystem needs all trophic levels — apex, meso, and prey — functioning in balance.',
     historicalNote: 'Even during peak wolf presence in Yellowstone, coyotes persisted at reduced numbers — their complete loss is an imbalance.',
@@ -2675,6 +2696,7 @@ const INSIGHTS = [
       'Rabbit overpopulation is stripping the ground cover. This adds yet another layer of grazing pressure on an already stressed ecosystem.',
       'Too many rabbits. In nature, coyotes, foxes, and raptors keep them balanced. Remove those controls, and the population spirals.',
     ],
+    audioFiles: ["rabbit_boom_0.mp3"],
     concept: 'Herbivore Overcompensation',
     conceptDetail: 'When predation is removed, prey species overshoot their ecological carrying capacity, degrading their own habitat.',
     historicalNote: 'Rodent and rabbit populations in Yellowstone shifted measurably with changes in coyote and wolf numbers.',
@@ -2691,6 +2713,7 @@ const INSIGHTS = [
       'Total bird loss. Rachel Carson warned about this. Birds are not just beautiful — they are essential for seed dispersal, insect control, and ecosystem monitoring.',
       'The forest is silent. No birdsong means no seed dispersal, no insect control. Vegetation recovery will slow dramatically without them.',
     ],
+    audioFiles: ["bird_extinction_0.mp3"],
     concept: 'Ecosystem Services',
     conceptDetail: 'Birds provide critical services: seed dispersal, insect control, pollination support, and nutrient cycling.',
     historicalNote: 'Rachel Carson\'s Silent Spring warned of ecological collapse when bird populations crash.',
@@ -2707,6 +2730,7 @@ const INSIGHTS = [
       'Small mammal extinction. Rabbits provided food for coyotes and aerated the soil through burrowing. Their loss cascades in both directions.',
       'No rabbits left. The food web just lost another critical link. Without prey, coyotes will decline. Without burrowing, soil health drops.',
     ],
+    audioFiles: ["rabbit_extinct_0.mp3"],
     concept: 'Prey Base Collapse',
     conceptDetail: 'When prey species are eliminated, their predators decline and ecosystem functions they provided are lost.',
     historicalNote: 'Small mammal diversity in Yellowstone is a key indicator of overall ecosystem function.',
@@ -2723,6 +2747,7 @@ const INSIGHTS = [
       'The aquatic ecosystem is collapsing. Without shade from willows, water temperatures rise and dissolved oxygen drops. Fish cannot survive this.',
       'Yellowstone cutthroat trout nearly vanished when the riparian zone collapsed. They only recovered after wolves brought the willows back.',
     ],
+    audioFiles: ["fish_decline_0.mp3"],
     concept: 'Indicator Species',
     conceptDetail: 'Fish health directly reflects water quality, temperature stability, and habitat complexity.',
     historicalNote: 'Yellowstone cutthroat trout recovered after willows regrew, providing shade and cooler water.',
@@ -2739,6 +2764,7 @@ const INSIGHTS = [
       'Systematic wolf extermination. The government thought killing predators would help the park. Instead, it triggered the worst ecological crisis in Yellowstone history.',
       'Hunters are overwhelming the wolves. The last Yellowstone wolf was killed in 1926. It took 69 years before anyone tried to bring them back.',
     ],
+    audioFiles: ["hunting_pressure_0.mp3"],
     concept: 'Human-Driven Extinction',
     conceptDetail: 'Species can be driven to extinction or near-extinction through deliberate human hunting.',
     historicalNote: 'Last Yellowstone wolf was killed in 1926; reintroduction took 69 years to achieve in 1995.',
@@ -2755,6 +2781,7 @@ const INSIGHTS = [
       'Ecosystem restoration success. Every link in the food chain is working. This is what balance looks like — and it all started with bringing back the wolves.',
       'You have recreated one of ecology is greatest success stories. The Yellowstone trophic cascade recovery proves that nature can heal when we give it the right tools.',
     ],
+    audioFiles: ["full_recovery_0.mp3"],
     concept: 'Ecological Restoration',
     conceptDetail: 'Active intervention to restore degraded ecosystems to functional, healthy states.',
     historicalNote: 'Yellowstone\'s trophic cascade recovery is considered one of ecology\'s great success stories.',
@@ -2771,6 +2798,7 @@ const INSIGHTS = [
       'Reintroduction into a degraded ecosystem. The wolves have their work cut out for them. But if history is any guide, their presence alone will start turning things around.',
       'Fourteen wolves changed everything. They were dropped into a broken Yellowstone and triggered a cascade of recovery that scientists are still studying today.',
     ],
+    audioFiles: ["wolves_reintroduced_0.mp3"],
     concept: 'Keystone Species Reintroduction',
     conceptDetail: 'Restoring a keystone species can initiate cascading recovery throughout a damaged ecosystem.',
     historicalNote: 'The 1995 reintroduction was controversial but became a textbook example of successful restoration.',
@@ -2789,6 +2817,7 @@ const INSIGHTS = [
       'Bears are an iconic Yellowstone species. When they are doing well, it means both the aquatic and terrestrial food webs are functioning.',
       'The grizzlies are finding everything they need — fish, berries, space. A bear-friendly landscape is a healthy landscape.',
     ],
+    audioFiles: ["bear_thriving_0.mp3"],
     concept: 'Umbrella Species',
     conceptDetail: 'Protecting habitat for wide-ranging species like grizzly bears also protects many other species that share the same habitat.',
     historicalNote: 'Yellowstone grizzly populations recovered from ~136 in 1975 to over 700 today, closely tied to ecosystem health.',
@@ -2805,6 +2834,7 @@ const INSIGHTS = [
       'Bears are struggling because both their food sources are failing. This is what happens when the whole web breaks down.',
       'Grizzly bear decline is a red flag. It means neither the rivers nor the forests are healthy enough to support large omnivores.',
     ],
+    audioFiles: ["bear_starving_0.mp3"],
     concept: 'Trophic Omnivory',
     conceptDetail: 'Omnivores like bears feed at multiple trophic levels. Their decline signals widespread ecosystem failure across multiple food chains.',
     historicalNote: 'Yellowstone grizzlies were nearly lost when whitebark pine and cutthroat trout — key food sources — declined simultaneously.',
@@ -2823,6 +2853,7 @@ const INSIGHTS = [
       'Here is a strategy tip: wolves are the key to everything. Add a few and watch how they change elk behavior almost immediately.',
       'The system needs top-down pressure. Add wolves to bring elk under control and let the vegetation start recovering.',
     ],
+    audioFiles: ["guide_add_wolves_0.mp3"],
     concept: 'Top-Down Regulation',
     conceptDetail: 'Apex predators regulate entire ecosystems from the top of the food chain down.',
     historicalNote: 'The decision to reintroduce wolves was the single most impactful conservation action in Yellowstone history.',
@@ -2839,6 +2870,7 @@ const INSIGHTS = [
       'The predator-prey balance is improving, but vegetation lags behind. In real Yellowstone, willow recovery took over a decade.',
       'You have the wolves in place. Now the ecosystem needs time — or a little help. Try adding trees near the river.',
     ],
+    audioFiles: ["guide_patience_trees_0.mp3"],
     concept: 'Recovery Time Lag',
     conceptDetail: 'Ecosystem recovery often lags behind the intervention that triggers it, especially for slow-growing species like trees.',
     historicalNote: 'Yellowstone aspen showed significant recovery only 10-15 years after wolf reintroduction.',
@@ -2855,6 +2887,7 @@ const INSIGHTS = [
       'Vegetation is starting to recover, which means beavers can now find the willows they need for dam building. Add some beavers to boost river health.',
       'Beavers are the missing piece for river recovery. One beaver family can transform an entire stretch of waterway.',
     ],
+    audioFiles: ["guide_river_help_0.mp3"],
     concept: 'Beaver Dam Ecology',
     conceptDetail: 'Beaver dams create complex wetland habitats that slow water flow, trap sediment, and support biodiversity.',
     historicalNote: 'Yellowstone beaver populations recovered naturally after willows regrew, but strategic reintroduction accelerated the process.',
@@ -2874,6 +2907,7 @@ const INSIGHTS = [
       'I can see the food web connections strengthening. Maintain this trajectory and balance will follow.',
       'Progress. The relationships between species are starting to work. Stay the course and watch the score climb.',
     ],
+    audioFiles: ["guide_balance_close_0.mp3"],
     concept: 'Ecosystem Resilience',
     conceptDetail: 'Healthy ecosystems develop redundant connections that make them resistant to disturbance.',
     historicalNote: 'Yellowstone scientists tracked dozens of ecosystem health indicators over decades to measure recovery progress.',
@@ -2890,6 +2924,7 @@ const INSIGHTS = [
       'The wolf population has overshot. There are not enough elk to sustain them. Try letting the system self-correct.',
       'This is a common mistake. More wolves does not always mean better. The ecosystem needs the right ratio, not just more predators.',
     ],
+    audioFiles: ["guide_overadding_0.mp3"],
     concept: 'Lotka-Volterra Dynamics',
     conceptDetail: 'Predator-prey cycles follow mathematical patterns where both populations oscillate. Adding too many predators crashes the cycle.',
     historicalNote: 'Yellowstone wolf packs naturally limit their size through territorial competition — typically 6-10 per pack.',
@@ -2906,6 +2941,7 @@ const INSIGHTS = [
       'Do not be fooled by the current elk count. Without wolf predation, exponential growth is coming. Introduce wolves now while you still can.',
       'This quiet period is temporary. Elk breed rapidly without fear of predators. The overgrazing crisis is just a few generations away.',
     ],
+    audioFiles: ["guide_elk_no_wolves_0.mp3"],
     concept: 'Exponential Growth',
     conceptDetail: 'Without predation, herbivore populations grow exponentially until they crash by exceeding carrying capacity.',
     historicalNote: 'Yellowstone elk went from manageable numbers to 25,000 in just two decades after wolf removal.',
@@ -2922,6 +2958,7 @@ const INSIGHTS = [
       'You have achieved something remarkable. Wolves, elk, trees, beavers, fish, birds — all in harmony. Hold this balance.',
       'This is the Yellowstone that exists today thanks to wolf reintroduction. You are looking at one of nature is great success stories.',
     ],
+    audioFiles: ["guide_thriving_0.mp3"],
     concept: 'Climax Community',
     conceptDetail: 'A stable ecosystem where species composition remains relatively constant — the end-point of ecological succession.',
     historicalNote: 'Modern Yellowstone is considered one of the most successful large-scale ecosystem restorations in history.',
@@ -3176,10 +3213,14 @@ export default function Simulation() {
           setInsightTimer(12 * 60); // 12 seconds at 60 fps
           setInsightLog(prev => [insight, ...prev.slice(0, 7)]);
           insightCounterRef.current[insight.id] = 0;
-          // Speak the insight via narrator (random line from pool)
-          if (narratorEnabled && insight.spokenLines && insight.spokenLines.length > 0) {
-            const line = insight.spokenLines[Math.floor(Math.random() * insight.spokenLines.length)];
-            narrator.speak(insight.id, line);
+          // Speak the insight via narrator (pre-generated audio files)
+          if (narratorEnabled && insight.audioFiles && insight.audioFiles.length > 0) {
+            // Pick a random audio file from what's available
+            const audioIdx = Math.floor(Math.random() * insight.audioFiles.length);
+            const audioFile = insight.audioFiles[audioIdx];
+            // Use matching spoken line text for subtitle (fall back to first line)
+            const line = insight.spokenLines[audioIdx] || insight.spokenLines[0];
+            narrator.speak(insight.id, line, audioFile);
             setNarratorActive(true);
             setSpokenSubtitle(line);
             setTimeout(() => { setNarratorActive(false); setSpokenSubtitle(null); }, 10000);
@@ -3342,11 +3383,11 @@ export default function Simulation() {
 
   // ─── INTRO NARRATION SEQUENCE ──────────────────────────────────────
   const INTRO_LINES = [
-    { delay: 0, text: "Welcome to Yellowstone, 1926. The last wolf has just been killed." },
-    { delay: 8000, text: "For decades, the government hunted every wolf in the park to protect livestock. Now the ecosystem is paying the price." },
-    { delay: 18000, text: "Without wolves, elk are multiplying unchecked. They are devouring the willows and aspens that hold the riverbanks together." },
-    { delay: 28000, text: "Your mission: restore this ecosystem. Add wolves and other species to bring the food web back into balance." },
-    { delay: 37000, text: "Reach a balance score of 75 and hold it for 20 seconds to win. Good luck, ranger." },
+    { delay: 0, text: "Welcome to Yellowstone, 1926. The last wolf has just been killed.", audio: "intro_0.mp3" },
+    { delay: 8000, text: "For decades, the government hunted every wolf in the park to protect livestock. Now the ecosystem is paying the price.", audio: "intro_1.mp3" },
+    { delay: 18000, text: "Without wolves, elk are multiplying unchecked. They are devouring the willows and aspens that hold the riverbanks together.", audio: "intro_2.mp3" },
+    { delay: 28000, text: "Your mission: restore this ecosystem. Add wolves and other species to bring the food web back into balance.", audio: "intro_3.mp3" },
+    { delay: 37000, text: "Reach a balance score of 75 and hold it for 20 seconds to win. Good luck, ranger.", audio: "intro_4.mp3" },
   ];
   const introPlayedRef = useRef(false);
 
@@ -3364,10 +3405,10 @@ export default function Simulation() {
         setAudioInit(true);
       }).catch(e => console.error('Audio init failed:', e));
     }
-    INTRO_LINES.forEach(({ delay, text }) => {
+    INTRO_LINES.forEach(({ delay, text, audio }) => {
       setTimeout(() => {
         if (narratorEnabled) {
-          narrator.speak('intro_' + delay, text);
+          narrator.speak('intro_' + delay, text, audio);
           setSpokenSubtitle(text);
           setNarratorActive(true);
           setTimeout(() => setNarratorActive(false), 6000);
