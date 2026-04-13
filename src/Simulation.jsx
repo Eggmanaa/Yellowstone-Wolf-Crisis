@@ -3411,38 +3411,22 @@ export default function Simulation() {
 
   return (
     <div style={S.root}>
-      {/* ═══ PORTRAIT ORIENTATION BANNER ═══ */}
-      {isMobile && isPortrait && !portraitDismissed && (
+      {/* ═══ PORTRAIT LOCK — FULL SCREEN BLOCKER ═══ */}
+      {isMobile && isPortrait && (
         <div style={{
-          background: "linear-gradient(135deg, rgba(239,68,68,0.15), rgba(249,115,22,0.15))",
-          borderBottom: "1px solid #dc2626",
-          padding: "8px 12px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          zIndex: 50,
-          flexShrink: 0,
+          position: "fixed", inset: 0, background: "linear-gradient(135deg, #0a0f1a 0%, #1a1040 50%, #0a0f1a 100%)",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          zIndex: 200, padding: 32, textAlign: "center",
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#fca5a5" }}>
-            <span style={{ fontSize: 16 }}>📱</span>
-            <span>Rotate to landscape for best experience</span>
+          <div style={{ fontSize: 64, marginBottom: 20, animation: "rotatePhone 2s ease-in-out infinite" }}>📱</div>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: "#e2e8f0", margin: "0 0 12px" }}>Rotate Your Device</h2>
+          <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.6, maxWidth: 280, margin: "0 0 20px" }}>
+            This ecosystem simulation requires landscape mode to display properly.
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(30,41,59,0.8)", borderRadius: 12, padding: "10px 20px", border: "1px solid #334155" }}>
+            <span style={{ fontSize: 20 }}>↻</span>
+            <span style={{ fontSize: 13, color: "#60a5fa", fontWeight: 600 }}>Turn your phone sideways</span>
           </div>
-          <button
-            onClick={() => setPortraitDismissed(true)}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "#94a3b8",
-              cursor: "pointer",
-              fontSize: 18,
-              padding: 0,
-              display: "flex",
-              alignItems: "center"
-            }}
-          >
-            ✕
-          </button>
         </div>
       )}
 
