@@ -3398,13 +3398,13 @@ export default function Simulation() {
   // ─── STYLES (mobile-responsive) ──────────────────────────────────────
   const m = isMobile;
   const S = {
-    root: { width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: "#0a0f1a", overflow: "hidden", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: "#e2e8f0", position: "relative" },
+    root: { width: "100vw", height: "100dvh", display: "flex", flexDirection: "column", background: "#0a0f1a", overflow: "hidden", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: "#e2e8f0", position: "relative" },
     topBar: { display: m ? "flex" : "flex", flexDirection: m ? "row" : "row", alignItems: "center", gap: m ? 4 : 10, padding: m ? "4px 8px" : "8px 16px", background: "#0f172a", borderBottom: "1px solid #1e293b", flexShrink: 0, height: m ? "auto" : 40, minHeight: m ? 34 : 40, zIndex: 10, overflowX: m ? "auto" : "visible", overflowY: "hidden", WebkitOverflowScrolling: "touch", flexWrap: m ? "wrap" : "nowrap" },
     main: { flex: 1, display: "flex", overflow: "hidden", position: "relative", minHeight: 0 },
     panel: { width: m ? 0 : (panelCollapsed ? 44 : 200), background: "#0f172a", borderRight: m ? "none" : "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0, transition: "width 0.2s ease", overflow: "hidden", zIndex: 5 },
-    canvasWrap: { flex: 1, position: "relative", overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" },
-    bottomDock: { display: m ? "flex" : "none", height: 50, background: "rgba(15,23,42,0.95)", borderTop: "1px solid #1e293b", overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", alignItems: "center", padding: "0 8px", gap: 8, flexShrink: 0, zIndex: 5 },
-    dockSpeciesBtn: (active, color) => ({ minWidth: 44, width: 44, height: 44, borderRadius: "50%", border: active ? `3px solid ${color}` : "2px solid #334155", background: active ? `${color}25` : "rgba(30,41,59,0.5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, cursor: "pointer", flexShrink: 0, transition: "all 0.15s ease", boxShadow: active ? `0 0 8px ${color}40` : "none" }),
+    canvasWrap: { flex: 1, position: "relative", overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", paddingBottom: m ? 54 : 0 },
+    bottomDock: { display: m ? "flex" : "none", position: m ? "fixed" : "static", bottom: 0, left: 0, right: 0, height: 54, background: "rgba(15,23,42,0.97)", borderTop: "2px solid #334155", overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", alignItems: "center", padding: "0 8px", gap: 8, flexShrink: 0, zIndex: 20 },
+    dockSpeciesBtn: (active, color) => ({ minWidth: 48, width: 48, height: 48, borderRadius: "50%", border: active ? `3px solid ${color}` : "2px solid #475569", background: active ? `${color}30` : "rgba(30,41,59,0.7)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, cursor: "pointer", flexShrink: 0, transition: "all 0.15s ease", boxShadow: active ? `0 0 12px ${color}50` : "none" }),
     btn: (active, color) => ({ padding: m ? "4px 8px" : "4px 12px", borderRadius: 6, border: active ? `1px solid ${color}` : "1px solid #334155", background: active ? `${color}20` : "transparent", color: active ? color : "#94a3b8", fontSize: m ? 10 : 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: m ? 28 : "auto" }),
     btnSolid: (bg) => ({ padding: m ? "5px 10px" : "6px 14px", borderRadius: 6, border: "none", background: bg, color: "#fff", fontSize: m ? 11 : 12, fontWeight: 700, cursor: "pointer", minHeight: m ? 28 : "auto" }),
   };
@@ -3639,7 +3639,7 @@ export default function Simulation() {
 
           {/* Alerts overlay */}
           {alerts.length > 0 && (
-            <div style={{ position: "absolute", bottom: 12, left: 12, maxWidth: 340, pointerEvents: "none", zIndex: 4 }}>
+            <div style={{ position: "absolute", bottom: m ? 62 : 12, left: 12, maxWidth: 340, pointerEvents: "none", zIndex: 4 }}>
               {alerts.slice(0, 3).map((a, i) => (
                 <div key={i} style={{
                   background: a.sev === "crit" ? "rgba(69,10,10,0.94)" : "rgba(66,32,6,0.94)",
@@ -3656,7 +3656,7 @@ export default function Simulation() {
           {/* Narrator subtitle bar */}
           {spokenSubtitle && narratorEnabled && (
             <div style={{
-              position: "absolute", bottom: alerts.length > 0 ? (m ? 50 : 80) : (m ? 8 : 16), left: "50%", transform: "translateX(-50%)",
+              position: "absolute", bottom: alerts.length > 0 ? (m ? 110 : 80) : (m ? 62 : 16), left: "50%", transform: "translateX(-50%)",
               maxWidth: m ? "92%" : "70%", background: "rgba(0,0,0,0.82)", borderRadius: m ? 8 : 10, padding: m ? "6px 12px" : "10px 20px",
               border: "1px solid rgba(244,114,182,0.3)", backdropFilter: "blur(8px)", zIndex: 5, pointerEvents: "none",
               animation: "subtitleFadeIn 0.4s ease-out",
