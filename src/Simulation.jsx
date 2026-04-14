@@ -4082,15 +4082,6 @@ export default function Simulation() {
 
         <div style={{ flex: 1 }} />
 
-        {/* Scenarios — hidden on mobile, shown on desktop */}
-        {!m && <>
-          <span style={{ fontSize: 10, color: "#475569" }}>Scenarios:</span>
-          <button onClick={() => handlePreset("balanced")} style={S.btn(false, "#22c55e")}>Balanced</button>
-          <button onClick={() => handlePreset("noWolves")} style={S.btn(false, "#ef4444")}>No Wolves</button>
-          <button onClick={() => handlePreset("heavyHunting")} style={S.btn(false, "#f97316")}>Heavy Hunt</button>
-          <button onClick={() => handlePreset("recovery")} style={S.btn(false, "#3b82f6")}>Recovery</button>
-        </>}
-
         <button onClick={handleAudioToggle} style={S.btn(audioInit, "#a78bfa")} title={audioInit ? (audioMuted ? 'Unmute' : 'Mute') : 'Click for sound'}>
           {audioInit ? (audioMuted ? '🔇' : '🔊') : '🔇'}{!m && ' Sound'}
         </button>
