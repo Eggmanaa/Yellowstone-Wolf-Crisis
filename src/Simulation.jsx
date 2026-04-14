@@ -724,7 +724,8 @@ function tickEcosystem(eco) {
     }
   }
 
-  if (eco.tick % 60 === 0) {
+  // Sample stats every 20 ticks (~3x per simulated second) for near-real-time chart feel
+  if (eco.tick % 20 === 0) {
     const stats = {
       wolves: eco.entities.filter(e => e.type === WOLF && e.alive).length,
       elk: eco.entities.filter(e => e.type === ELK && e.alive).length,
@@ -756,7 +757,8 @@ function tickEcosystem(eco) {
     const brs = clamp(stats.bears / 6, 0, 1) * 5;   // bears
     eco.balanceScore = clamp(Math.round(ws + es + ts + vs + rs + bs + bis + fs + cs + rbs + brs), 0, 100);
 
-    if (eco.history.length > 200) eco.history.shift();
+    // 600 samples × 0.33s = ~200s visible window — higher resolution, same time span
+    if (eco.history.length > 600) eco.history.shift();
     eco.history.push({ t: eco.history.length, ...stats, score: eco.balanceScore });
   }
   return eco;
@@ -3168,66 +3170,130 @@ const INSIGHTS = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function FoodWebDiagram({ stats }) {
+  // Nodes — positions laid out in 4 trophic tiers
+  // Tier 1 (top): apex predators + secondary consumers
+  // Tier 2: primary consumers (herbivores, small prey)
+  // Tier 3: producers + ecosystem components
+  // Tier 4: environment (river)
   const nodes = [
-    { id: 'wolf', label: '🐺', x: 125, y: 30, pop: stats.wolves, ideal: 15 },
-    { id: 'elk', label: '🦌', x: 60, y: 80, pop: stats.elk, ideal: 45 },
-    { id: 'veg', label: '🌿', x: 30, y: 150, pop: stats.vegetationHealth, ideal: 80 },
-    { id: 'river', label: '🏞️', x: 125, y: 150, pop: stats.riverHealth, ideal: 85 },
-    { id: 'beaver', label: '🦫', x: 190, y: 80, pop: stats.beavers, ideal: 8 },
-    { id: 'fish', label: '🐟', x: 200, y: 150, pop: stats.fish, ideal: 20 },
-    { id: 'bird', label: '🐦', x: 90, y: 30, pop: stats.birds, ideal: 15 },
-    { id: 'coyote', label: '🐾', x: 190, y: 30, pop: stats.coyotes, ideal: 10 },
-    { id: 'rabbit', label: '🐰', x: 150, y: 80, pop: stats.rabbits, ideal: 25 },
-    { id: 'bear', label: '🐻', x: 55, y: 30, pop: stats.bears, ideal: 6 },
+    // Tier 1 — apex predators + mesopredators
+    { id: 'wolf',   label: '🐺', name: 'Wolves',     x: 160, y: 35,  pop: stats.wolves,           ideal: 15 },
+    { id: 'bear',   label: '🐻', name: 'Grizzlies',  x: 60,  y: 35,  pop: stats.bears,            ideal: 6 },
+    { id: 'coyote', label: '🐾', name: 'Coyotes',    x: 260, y: 35,  pop: stats.coyotes,          ideal: 8 },
+    // Tier 2 — primary consumers
+    { id: 'elk',    label: '🦌', name: 'Elk',        x: 110, y: 100, pop: stats.elk,              ideal: 38 },
+    { id: 'rabbit', label: '🐰', name: 'Rabbits',    x: 220, y: 100, pop: stats.rabbits,          ideal: 22 },
+    { id: 'bird',   label: '🐦', name: 'Songbirds',  x: 30,  y: 100, pop: stats.birds,            ideal: 12 },
+    // Tier 3 — producers & engineers
+    { id: 'veg',    label: '🌿', name: 'Vegetation', x: 80,  y: 170, pop: stats.vegetationHealth, ideal: 80 },
+    { id: 'beaver', label: '🦫', name: 'Beavers',    x: 200, y: 170, pop: stats.beavers,          ideal: 8 },
+    // Tier 4 — aquatic
+    { id: 'fish',   label: '🐟', name: 'Fish',       x: 280, y: 170, pop: stats.fish,             ideal: 18 },
+    { id: 'river',  label: '🏞️', name: 'River',      x: 160, y: 230, pop: stats.riverHealth,      ideal: 85 },
   ];
 
   const getHealth = (pop, ideal) => {
+    if (pop <= 0) return 'missing';
     const ratio = pop / ideal;
-    if (ratio > 1.3 || ratio < 0.6) return 'critical';
-    if (ratio > 1.1 || ratio < 0.8) return 'stressed';
+    if (ratio > 1.5 || ratio < 0.5) return 'critical';
+    if (ratio > 1.2 || ratio < 0.75) return 'stressed';
     return 'healthy';
   };
-
   const getColor = (health) => {
-    if (health === 'critical') return '#ef4444';
-    if (health === 'stressed') return '#eab308';
-    return '#22c55e';
+    if (health === 'missing') return '#6b7280';   // gray — absent
+    if (health === 'critical') return '#ef4444';   // red
+    if (health === 'stressed') return '#eab308';   // yellow
+    return '#22c55e';                              // green
   };
 
+  // Edges — EVERY relationship in the game code. Color-coded by interaction type.
+  // red    = predation (eats / kills)
+  // green  = mutualism/positive (builds, supports, disperses seeds, engineers)
+  // orange = damage (grazes/overbrowses)
+  // blue   = competition/suppression
   const edges = [
-    { from: 'wolf', to: 'elk' },
-    { from: 'wolf', to: 'coyote' },
-    { from: 'elk', to: 'veg' },
-    { from: 'veg', to: 'river' },
-    { from: 'veg', to: 'beaver' },
-    { from: 'veg', to: 'bird' },
-    { from: 'beaver', to: 'river' },
-    { from: 'river', to: 'fish' },
-    { from: 'coyote', to: 'rabbit' },
-    { from: 'bear', to: 'fish' },
-    { from: 'bear', to: 'veg' },
+    // Predation (red)
+    { from: 'wolf', to: 'elk',      color: '#ef4444', type: 'eats' },
+    { from: 'coyote', to: 'rabbit', color: '#ef4444', type: 'eats' },
+    { from: 'bear', to: 'fish',     color: '#ef4444', type: 'eats' },
+    // Competition / mesopredator suppression (blue)
+    { from: 'wolf', to: 'coyote',   color: '#3b82f6', type: 'suppresses' },
+    // Grazing / browse damage (orange)
+    { from: 'elk', to: 'veg',       color: '#f97316', type: 'browses' },
+    { from: 'rabbit', to: 'veg',    color: '#f97316', type: 'grazes' },
+    { from: 'bear', to: 'veg',      color: '#f97316', type: 'forages' },
+    // Positive / engineering / support (green)
+    { from: 'bird', to: 'veg',      color: '#22c55e', type: 'disperses seeds' },
+    { from: 'veg', to: 'beaver',    color: '#22c55e', type: 'provides food' },
+    { from: 'veg', to: 'bird',      color: '#22c55e', type: 'provides nesting' },
+    { from: 'beaver', to: 'river',  color: '#22c55e', type: 'builds dams' },
+    { from: 'veg', to: 'river',     color: '#22c55e', type: 'holds banks' },
+    { from: 'fish', to: 'river',    color: '#22c55e', type: 'stream health' },
   ];
 
   return (
-    <svg width="250" height="200" style={{ background: '#0f172a', borderRadius: 8, border: '1px solid #334155', padding: 8 }}>
-      {edges.map((e, i) => {
-        const fromN = nodes.find(n => n.id === e.from);
-        const toN = nodes.find(n => n.id === e.to);
-        return (
-          <line key={i} x1={fromN.x} y1={fromN.y} x2={toN.x} y2={toN.y} stroke="#475569" strokeWidth="1" opacity="0.6" />
-        );
-      })}
-      {nodes.map(n => {
-        const health = getHealth(n.pop, n.ideal);
-        const color = getColor(health);
-        return (
-          <g key={n.id}>
-            <circle cx={n.x} cy={n.y} r="12" fill={color} opacity="0.3" stroke={color} strokeWidth="2" />
-            <text x={n.x} y={n.y + 5} textAnchor="middle" fontSize="14">{n.label}</text>
-          </g>
-        );
-      })}
-    </svg>
+    <div style={{ background: '#0f172a', borderRadius: 8, border: '1px solid #334155', padding: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#cbd5e1' }}>🕸️ Live Food Web</div>
+        <div style={{ fontSize: 8, color: '#64748b' }}>Game + Real Ecology</div>
+      </div>
+      <svg width="320" height="260" style={{ display: 'block' }}>
+        <defs>
+          <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#ef4444" />
+          </marker>
+          <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#22c55e" />
+          </marker>
+          <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#f97316" />
+          </marker>
+          <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" fill="#3b82f6" />
+          </marker>
+        </defs>
+        {/* Edges */}
+        {edges.map((e, i) => {
+          const fromN = nodes.find(n => n.id === e.from);
+          const toN = nodes.find(n => n.id === e.to);
+          // Shorten the line so arrow doesn't overlap node circle
+          const dx = toN.x - fromN.x, dy = toN.y - fromN.y;
+          const len = Math.hypot(dx, dy);
+          const ux = dx / len, uy = dy / len;
+          const x1 = fromN.x + ux * 14, y1 = fromN.y + uy * 14;
+          const x2 = toN.x - ux * 16, y2 = toN.y - uy * 16;
+          const markerId = e.color === '#ef4444' ? 'arrow-red' : e.color === '#22c55e' ? 'arrow-green' : e.color === '#f97316' ? 'arrow-orange' : 'arrow-blue';
+          return (
+            <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={e.color} strokeWidth="1.5" opacity="0.7" markerEnd={`url(#${markerId})`}>
+              <title>{nodes.find(n => n.id === e.from).name} {e.type} {nodes.find(n => n.id === e.to).name}</title>
+            </line>
+          );
+        })}
+        {/* Nodes */}
+        {nodes.map(n => {
+          const health = getHealth(n.pop, n.ideal);
+          const color = getColor(health);
+          const popLabel = (n.id === 'veg' || n.id === 'river') ? `${Math.round(n.pop)}%` : String(n.pop);
+          return (
+            <g key={n.id}>
+              <circle cx={n.x} cy={n.y} r="13" fill={color} fillOpacity="0.25" stroke={color} strokeWidth="2" />
+              <text x={n.x} y={n.y + 5} textAnchor="middle" fontSize="14">{n.label}</text>
+              <text x={n.x} y={n.y + 26} textAnchor="middle" fontSize="8" fill="#cbd5e1" fontWeight="600">{popLabel}</text>
+            </g>
+          );
+        })}
+      </svg>
+      {/* Legend */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, fontSize: 8, color: '#94a3b8', marginTop: 4 }}>
+        <div><span style={{ color: '#ef4444' }}>→</span> predation</div>
+        <div><span style={{ color: '#22c55e' }}>→</span> supports/builds</div>
+        <div><span style={{ color: '#f97316' }}>→</span> grazes/browses</div>
+        <div><span style={{ color: '#3b82f6' }}>→</span> suppresses</div>
+      </div>
+      <div style={{ fontSize: 8, color: '#64748b', marginTop: 3, textAlign: 'center' }}>
+        Circle color: <span style={{ color: '#22c55e' }}>healthy</span> · <span style={{ color: '#eab308' }}>stressed</span> · <span style={{ color: '#ef4444' }}>critical</span> · <span style={{ color: '#6b7280' }}>missing</span>
+      </div>
+    </div>
   );
 }
 
@@ -4089,9 +4155,9 @@ export default function Simulation() {
           {narratorEnabled ? '🎙️' : '🔕'}{!m && ' Narrator'}
           {narratorActive && narratorEnabled && <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, borderRadius: "50%", background: "#f472b6", animation: "pulse 1s infinite" }} />}
         </button>
-        {!m && <button onClick={() => setShowWeb(!showWeb)} style={S.btn(showWeb, "#fb923c")}>🕸️ Web</button>}
+        <button onClick={() => setShowWeb(!showWeb)} style={S.btn(showWeb, "#fb923c")} title="Food Web Diagram">🕸️ {m ? "" : "Web"}</button>
         {!m && <button onClick={() => setShowLearn(!showLearn)} style={S.btn(showLearn, "#60a5fa")}>📚 Learn</button>}
-        {!m && <button onClick={() => setShowChart(!showChart)} style={S.btn(showChart, "#60a5fa")}>📊</button>}
+        <button onClick={() => setShowChart(!showChart)} style={S.btn(showChart, "#60a5fa")} title="Predator-Prey Chart (toggle on/off)">📊 {m ? "" : "Chart"}</button>
         <button onClick={() => setShowHelp(true)} style={S.btn(false, "#64748b")}>{m ? '?' : '?'}</button>
       </div>
 
