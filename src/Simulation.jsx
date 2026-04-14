@@ -3059,6 +3059,219 @@ function getScoreColor(s) { return s >= 75 ? "#22c55e" : s >= 50 ? "#eab308" : s
 function getScoreLabel(s) { return s >= 85 ? "Pristine Balance" : s >= 70 ? "Healthy" : s >= 50 ? "Stressed" : s >= 25 ? "Degraded" : "Collapsing"; }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MANAGEMENT POINTS — action costs and regen logic
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Cost to release species (per canvas click)
+const MP_COSTS = {
+  [WOLF]: 15,
+  [ELK]: 6,
+  [BEAVER]: 10,
+  [COYOTE]: 4,
+  [FISH]: 4,
+  [BIRD]: 5,
+  [RABBIT]: 4,
+  [BEAR]: 10,
+};
+
+// Special (non-placement) action costs
+const MP_ACTION_COSTS = {
+  cull_elk: 8,        // remove 5 random elk
+  habitat_restore: 20, // burst of tree spawns
+  ranger_patrol: 15,   // clear all hunters from map
+};
+
+// Regen per tick (60 ticks = 1 second) based on score tier
+// Tier thresholds: below 30 → trickle, 30-49 → slow, 50-69 → medium, 70+ → fast
+function mpRegenPerSec(score) {
+  if (score >= 70) return 0.50;  // 30 MP/min
+  if (score >= 50) return 0.33;  // 20 MP/min
+  if (score >= 30) return 0.22;  // ~13 MP/min
+  return 0.16;                    // ~10 MP/min — always regens so no soft-lock
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCENARIO DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const SCENARIOS = [
+  {
+    id: "reintro",
+    title: "1995 Reintroduction",
+    emoji: "🐺",
+    year: "1995",
+    difficulty: "Standard",
+    startMp: 100,
+    blurb: "The canonical crisis. Wolves are gone. Elk dominate. Restore the cascade.",
+    learning: "Trophic cascade, keystone species, predator-prey dynamics",
+    ecosystemStart: "noWolves",
+    introAudio: "scenario_reintro_0.mp3",
+    introLine: "1995. The last wild wolves were shot in Yellowstone seventy years ago. Now, for the first time in a lifetime, wolves will run free again. Bring them home.",
+  },
+  {
+    id: "cwd",
+    title: "Chronic Wasting Disease",
+    emoji: "🧬",
+    year: "2024",
+    difficulty: "Hard",
+    startMp: 120,
+    blurb: "CWD is spreading through the elk herd. Dense populations die faster. Keep the ecosystem balanced without stockpiling prey.",
+    learning: "Disease ecology, density-dependent mortality",
+    ecosystemStart: "balanced",
+    introAudio: "scenario_cwd_0.mp3",
+    introLine: "A new threat: Chronic Wasting Disease. A prion illness spreading through the elk herd. There is no cure. Your only defense is a balanced ecosystem that prevents dense gatherings.",
+  },
+  {
+    id: "drought",
+    title: "Mega-Drought Summer",
+    emoji: "☀️",
+    year: "2021",
+    difficulty: "Hard",
+    startMp: 110,
+    blurb: "Rivers shrink, grass wilts, fish struggle. Balance the ecosystem on half the water.",
+    learning: "Abiotic factors, climate stress, ecosystem resilience",
+    ecosystemStart: "noWolves",
+    introAudio: "scenario_drought_0.mp3",
+    introLine: "The driest summer on record. Rivers are retreating. Grass is brittle. The ecosystem must survive on half the water it expects. Conservation becomes survival.",
+  },
+  {
+    id: "poaching",
+    title: "Poaching Crisis",
+    emoji: "🎯",
+    year: "2008",
+    difficulty: "Hard",
+    startMp: 100,
+    blurb: "Poachers target wolves. Deploy ranger patrols. Keep packs alive against human pressure.",
+    learning: "Human-wildlife conflict, conservation policy",
+    ecosystemStart: "balanced",
+    introAudio: "scenario_poaching_0.mp3",
+    introLine: "Poachers have entered the park. Wolves are their target. Protect your packs. Every hunter left unchecked is a pack lost.",
+  },
+  {
+    id: "tourism",
+    title: "Tourist Pressure",
+    emoji: "🚗",
+    year: "2019",
+    difficulty: "Medium",
+    startMp: 110,
+    blurb: "A highway corridor fragments the habitat. Wolves avoid it. Design around the wall of human presence.",
+    learning: "Habitat fragmentation, edge effects",
+    ecosystemStart: "noWolves",
+    introAudio: "scenario_tourism_0.mp3",
+    introLine: "Peak tourist season. A busy highway cuts through the heart of the range. Wolves and bears avoid it. Your ecosystem must work around a wall of human presence.",
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REAL-WORLD DATA COMPARISON MOMENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const DATA_MOMENTS = [
+  {
+    id: "wolf_pack",
+    trigger: (s) => s.wolves >= 8,
+    title: "Your pack vs. real Yellowstone",
+    yourStat: (s) => `${s.wolves} wolves`,
+    realStat: "1997 (2 years post-reintroduction): 21 wolves in 2 packs. By 2022: 95 wolves in 9 packs.",
+    audioFile: "data_wolf_milestone_0.mp3",
+  },
+  {
+    id: "elk_collapse",
+    trigger: (s) => s.elk < 25 && s.wolves >= 4,
+    title: "Elk populations: your game vs. reality",
+    yourStat: (s) => `${s.elk} elk remaining`,
+    realStat: "Real Yellowstone elk peaked at 19,000 in 1994. By 2013: 6,000. Wolves, drought, and bears restored balance together.",
+    audioFile: "data_elk_collapse_0.mp3",
+  },
+  {
+    id: "beaver_return",
+    trigger: (s) => s.beavers >= 10,
+    title: "The beaver comeback",
+    yourStat: (s) => `${s.beavers} beaver colonies`,
+    realStat: "In 1996, only 1 colony remained. By 2020: 9 colonies rebuilt 62 miles of stream habitat.",
+    audioFile: "data_beaver_return_0.mp3",
+  },
+  {
+    id: "veg_recovery",
+    trigger: (s) => s.vegetationHealth >= 80,
+    title: "Willow thickets return",
+    yourStat: (s) => `Vegetation health: ${Math.round(s.vegetationHealth)}%`,
+    realStat: "In real Yellowstone, willow thickets along streams doubled between 2001 and 2015 after wolves reduced elk browsing.",
+    audioFile: "data_veg_recovery_0.mp3",
+  },
+  {
+    id: "pre_wolf_lesson",
+    trigger: (s) => s.elk > 100,
+    title: "This is what pre-wolf Yellowstone looked like",
+    yourStat: (s) => `${s.elk} elk (unchecked)`,
+    realStat: "Pre-wolf Yellowstone: elk reached 19,000. They destroyed willow groves so completely that beavers disappeared within a decade.",
+    audioFile: "data_pre_wolf_lesson_0.mp3",
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCENARIO TICK EFFECTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Applied every tick during "playing" state. Scenario-specific events mutate eco.
+function applyScenarioEffects(eco, scenarioId, scenarioTick) {
+  if (scenarioId === "cwd") {
+    // Chronic Wasting Disease: every 30s, kill 2-4 random elk. Density-dependent.
+    if (scenarioTick % 1800 === 0 && scenarioTick > 0) {
+      const elks = eco.entities.filter(e => e.type === ELK && e.alive);
+      if (elks.length > 0) {
+        const density = elks.length / 50; // 1.0 = 50 elk
+        const toKill = Math.min(elks.length, 2 + Math.floor(density * 2 + Math.random() * 2));
+        const shuffled = [...elks].sort(() => Math.random() - 0.5).slice(0, toKill);
+        for (const e of shuffled) {
+          e.alive = false;
+          eco.particles.push({ type: "kill", x: e.x, y: e.y, color: "#7c3aed", icon: "🦠", age: 0, maxAge: 90 });
+        }
+      }
+    }
+  } else if (scenarioId === "drought") {
+    // Mega-Drought: permanent half-rate veg regen, shrinks river, periodic dry spells
+    eco.vegetationHealth = clamp(eco.vegetationHealth - 0.006, 0, 100); // constant drain
+    // Every 45s: visible "dry spell" drop
+    if (scenarioTick % 2700 === 0 && scenarioTick > 0) {
+      eco.vegetationHealth = clamp(eco.vegetationHealth - 8, 0, 100);
+      eco.riverHealth = clamp(eco.riverHealth - 6, 0, 100);
+    }
+  } else if (scenarioId === "poaching") {
+    // Poaching: hunters spawn 3x more aggressively and specifically pursue wolves
+    if (scenarioTick % 600 === 0 && scenarioTick > 0) {
+      const wolves = eco.entities.filter(e => e.type === WOLF && e.alive).length;
+      const hunters = eco.entities.filter(e => e.type === HUNTER && e.alive).length;
+      // Spawn up to 3 hunters if there are wolves to target
+      if (wolves > 0 && hunters < 8) {
+        const toSpawn = Math.min(3, 8 - hunters);
+        for (let i = 0; i < toSpawn; i++) {
+          eco.entities.push(createEntity(HUNTER, null, null, eco.W, eco.H));
+        }
+      }
+    }
+  } else if (scenarioId === "tourism") {
+    // Tourism corridor: a vertical band through the middle of the map
+    // stresses animals that enter it. Width = 15% of canvas, centered at 40%.
+    const corridorX = eco.W * 0.40;
+    const corridorW = eco.W * 0.15;
+    for (const e of eco.entities) {
+      if (!e.alive) continue;
+      if (e.type === WOLF || e.type === BEAR) {
+        const dx = Math.abs(e.x - corridorX);
+        if (dx < corridorW / 2) {
+          // Drain energy while inside corridor
+          if (e.energy !== undefined) e.energy -= 0.35;
+          // Nudge them out
+          const push = e.x < corridorX ? -0.8 : 0.8;
+          e.vx = (e.vx || 0) + push;
+        }
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT - FULL SCREEN LAYOUT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -3097,12 +3310,31 @@ export default function Simulation() {
   // Game state — victory/loss
   const [gameTimer, setGameTimer] = useState(0); // ticks elapsed
   const [gameState, setGameState] = useState("ready"); // ready | playing | won | lost
+  const [lossReason, setLossReason] = useState(null); // "time" | "collapse"
   const [healthyStreak, setHealthyStreak] = useState(0); // consecutive ticks in "healthy" zone
-  const GAME_DURATION = 25200; // ~7 min at 60fps (420 seconds)
-  const WIN_THRESHOLD = 70; // balance score needed
+  const GAME_DURATION = 36000; // 10 min at 60fps (600 seconds)
+  const WIN_THRESHOLD = 80; // balance score needed
   const WIN_STREAK_NEEDED = 900; // must hold healthy for 15 seconds (900 frames)
+  const COLLAPSE_THRESHOLD = 25; // score below this = collapse risk
+  const COLLAPSE_DURATION = 1800; // 30 seconds below threshold = loss
   const gameTimerRef = useRef(0);
   const healthyStreakRef = useRef(0);
+  const collapseStreakRef = useRef(0);
+
+  // Management Points — resource budget
+  const [mp, setMp] = useState(100);
+  const mpRef = useRef(100);
+  const mpRegenTickRef = useRef(0);
+
+  // Scenario system
+  const [scenarioId, setScenarioId] = useState("reintro");
+  const [showScenarioPicker, setShowScenarioPicker] = useState(false);
+  const scenarioEventTickRef = useRef(0);
+
+  // Real-world data comparison cards
+  const [dataCard, setDataCard] = useState(null);
+  const dataCardShownRef = useRef({}); // track which cards already shown this session
+  const dataCardTimerRef = useRef(0);
 
   // Responsive canvas sizing with ResizeObserver
   useEffect(() => {
@@ -3184,15 +3416,64 @@ export default function Simulation() {
       }
       if (healthyStreakRef.current % 60 === 0) setHealthyStreak(healthyStreakRef.current);
 
+      // Track collapse streak — score below threshold for sustained period
+      if (eco.balanceScore < COLLAPSE_THRESHOLD) {
+        collapseStreakRef.current += speed;
+      } else {
+        collapseStreakRef.current = 0;
+      }
+
+      // MP regeneration — tier based on current balance score
+      mpRegenTickRef.current += speed;
+      const regenPerSec = mpRegenPerSec(eco.balanceScore);
+      const mpPerTick = regenPerSec / 60; // ticks per sec = 60
+      mpRef.current = Math.min(200, mpRef.current + mpPerTick);
+      if (mpRegenTickRef.current % 30 === 0) setMp(Math.floor(mpRef.current));
+
+      // Scenario-specific effects
+      scenarioEventTickRef.current += speed;
+      applyScenarioEffects(eco, scenarioId, scenarioEventTickRef.current);
+
+      // Check for real-world data moment triggers every 180 ticks (3s)
+      if (eco.tick % 180 === 0 && !dataCard) {
+        for (const m of DATA_MOMENTS) {
+          if (dataCardShownRef.current[m.id]) continue;
+          if (m.trigger(eco.stats)) {
+            dataCardShownRef.current[m.id] = true;
+            setDataCard(m);
+            dataCardTimerRef.current = 600; // 10s auto-dismiss
+            // Speak the data audio if available (silent until MP3 exists)
+            if (narratorEnabled && m.audioFile) {
+              narrator.speak(m.id, m.realStat, m.audioFile);
+            }
+            break;
+          }
+        }
+      }
+
+      // Auto-dismiss data card
+      if (dataCardTimerRef.current > 0) {
+        dataCardTimerRef.current -= speed;
+        if (dataCardTimerRef.current <= 0) setDataCard(null);
+      }
+
       // Win condition: held healthy for required streak
       if (healthyStreakRef.current >= WIN_STREAK_NEEDED) {
         setGameState("won");
+        setLossReason(null);
         setRunning(false);
         setHealthyStreak(healthyStreakRef.current);
       }
-      // Loss condition: time ran out
+      // Loss: ecosystem collapsed (sustained very low score)
+      else if (collapseStreakRef.current >= COLLAPSE_DURATION) {
+        setGameState("lost");
+        setLossReason("collapse");
+        setRunning(false);
+      }
+      // Loss: time ran out
       else if (gameTimerRef.current >= GAME_DURATION) {
         setGameState("lost");
+        setLossReason("time");
         setRunning(false);
         setGameTimer(gameTimerRef.current);
       }
@@ -3241,6 +3522,14 @@ export default function Simulation() {
   const handleCanvasClick = (e) => {
     const eco = ecoRef.current;
     if (!eco || !canvasRef.current) return;
+
+    // Check MP cost before placement
+    const cost = MP_COSTS[selectedTool] ?? 0;
+    if (gameState === "playing" && mpRef.current < cost) {
+      // Not enough MP — briefly flash the MP bar (handled by CSS) + ignore click
+      return;
+    }
+
     const rect = canvasRef.current.getBoundingClientRect();
     const scaleX = eco.W / rect.width;
     const scaleY = eco.H / rect.height;
@@ -3250,6 +3539,12 @@ export default function Simulation() {
     eco.entities.push(createEntity(selectedTool, x, y, eco.W, eco.H));
     eco.particles.push({ type: "birth", x, y, color: "#60a5fa", icon: SPECIES.find(s => s.type === selectedTool)?.icon || "✨", age: 0, maxAge: 60 });
 
+    // Deduct MP
+    if (gameState === "playing" && cost > 0) {
+      mpRef.current = Math.max(0, mpRef.current - cost);
+      setMp(mpRef.current);
+    }
+
     if (!running) {
       const ctx = canvasRef.current.getContext("2d");
       if (ctx) {
@@ -3258,6 +3553,58 @@ export default function Simulation() {
       }
       recountStats(eco);
     }
+  };
+
+  // Special management actions — non-placement
+  const handleCullElk = () => {
+    const eco = ecoRef.current;
+    if (!eco || gameState !== "playing") return;
+    if (mpRef.current < MP_ACTION_COSTS.cull_elk) return;
+    const elks = eco.entities.filter(e => e.type === ELK && e.alive);
+    if (elks.length === 0) return;
+    // Remove up to 5 random elk
+    const toCull = Math.min(5, elks.length);
+    const shuffled = [...elks].sort(() => Math.random() - 0.5).slice(0, toCull);
+    for (const e of shuffled) {
+      e.alive = false;
+      eco.particles.push({ type: "kill", x: e.x, y: e.y, color: "#a78bfa", icon: "🦌", age: 0, maxAge: 70 });
+    }
+    mpRef.current -= MP_ACTION_COSTS.cull_elk;
+    setMp(mpRef.current);
+  };
+
+  const handleHabitatRestore = () => {
+    const eco = ecoRef.current;
+    if (!eco || gameState !== "playing") return;
+    if (mpRef.current < MP_ACTION_COSTS.habitat_restore) return;
+    // Burst of 8 tree spawns scattered in non-river areas
+    const RX = eco.W * TERRAIN.riverPct;
+    for (let i = 0; i < 8; i++) {
+      let tx, ty, attempts = 0;
+      do {
+        tx = rand(30, eco.W * 0.78);
+        ty = rand(30, eco.H - 30);
+        attempts++;
+      } while (Math.abs(tx - RX) < 30 && attempts < 5);
+      eco.entities.push(createEntity(TREE, tx, ty, eco.W, eco.H));
+      eco.particles.push({ type: "growth", x: tx, y: ty, color: "#22c55e", icon: "🌱", age: 0, maxAge: 100 });
+    }
+    eco.vegetationHealth = clamp(eco.vegetationHealth + 8, 0, 100);
+    mpRef.current -= MP_ACTION_COSTS.habitat_restore;
+    setMp(mpRef.current);
+  };
+
+  const handleRangerPatrol = () => {
+    const eco = ecoRef.current;
+    if (!eco || gameState !== "playing") return;
+    if (mpRef.current < MP_ACTION_COSTS.ranger_patrol) return;
+    const hunters = eco.entities.filter(e => e.type === HUNTER && e.alive);
+    for (const h of hunters) {
+      h.alive = false;
+      eco.particles.push({ type: "kill", x: h.x, y: h.y, color: "#ef4444", icon: "🚔", age: 0, maxAge: 70 });
+    }
+    mpRef.current -= MP_ACTION_COSTS.ranger_patrol;
+    setMp(mpRef.current);
   };
 
   function recountStats(eco) {
@@ -3279,6 +3626,18 @@ export default function Simulation() {
     setAlerts(getCascadeAlerts(s));
   }
 
+  const resetAllStreaks = () => {
+    gameTimerRef.current = 0;
+    healthyStreakRef.current = 0;
+    collapseStreakRef.current = 0;
+    scenarioEventTickRef.current = 0;
+    dataCardShownRef.current = {};
+    setGameTimer(0);
+    setHealthyStreak(0);
+    setLossReason(null);
+    setDataCard(null);
+  };
+
   const handleReset = () => {
     cancelAnimationFrame(animRef.current);
     setRunning(false);
@@ -3290,10 +3649,9 @@ export default function Simulation() {
     setScore(eco.balanceScore);
     setAlerts([]);
     setGameState("ready");
-    setGameTimer(0);
-    setHealthyStreak(0);
-    gameTimerRef.current = 0;
-    healthyStreakRef.current = 0;
+    resetAllStreaks();
+    mpRef.current = 100;
+    setMp(100);
     const ctx = canvasRef.current?.getContext("2d");
     if (ctx) { ctx.clearRect(0, 0, eco.W, eco.H); renderEcosystem(ctx, eco); }
   };
@@ -3303,11 +3661,54 @@ export default function Simulation() {
       handleReset();
     }
     setGameState("playing");
-    gameTimerRef.current = 0;
-    healthyStreakRef.current = 0;
-    setGameTimer(0);
-    setHealthyStreak(0);
+    resetAllStreaks();
     setRunning(true);
+  };
+
+  // Start a specific scenario — called from intro picker
+  const startScenario = (scenario) => {
+    cancelAnimationFrame(animRef.current);
+    narrator.stop();
+    // Initialize ecosystem matching scenario start state
+    ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h, scenario.ecosystemStart);
+    const eco = ecoRef.current;
+    // Tourism: clear wolves/bears from the corridor
+    if (scenario.id === "tourism") {
+      const corridorX = eco.W * 0.40;
+      const corridorW = eco.W * 0.15;
+      eco.entities = eco.entities.filter(e => {
+        if ((e.type === WOLF || e.type === BEAR) && Math.abs(e.x - corridorX) < corridorW / 2) return false;
+        return true;
+      });
+    }
+    // Drought: start with lower vegetation/river
+    if (scenario.id === "drought") {
+      eco.vegetationHealth = 25;
+      eco.riverHealth = 30;
+      eco.riverWidth *= 0.7;
+    }
+    // Poaching: seed a few hunters
+    if (scenario.id === "poaching") {
+      for (let i = 0; i < 3; i++) eco.entities.push(createEntity(HUNTER, null, null, eco.W, eco.H));
+    }
+    setStats(eco.stats);
+    setHistory([]);
+    setScore(eco.balanceScore);
+    setAlerts([]);
+    resetAllStreaks();
+    mpRef.current = scenario.startMp;
+    setMp(scenario.startMp);
+    setGameState("playing");
+    setRunning(true);
+    // Play scenario intro audio (silent until MP3 exists)
+    if (narratorEnabled && scenario.introAudio) {
+      narrator.speak(`scenario_${scenario.id}`, scenario.introLine, scenario.introAudio);
+      setNarratorActive(true);
+      setSpokenSubtitle(scenario.introLine);
+      setTimeout(() => { setNarratorActive(false); setSpokenSubtitle(null); }, 14000);
+    }
+    const ctx = canvasRef.current?.getContext("2d");
+    if (ctx) { ctx.clearRect(0, 0, eco.W, eco.H); renderEcosystem(ctx, eco); }
   };
 
   const handlePreset = (preset) => {
@@ -3508,6 +3909,30 @@ export default function Simulation() {
           </div>
         )}
 
+        {/* Management Points bar */}
+        {gameState === "playing" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#1e293b", borderRadius: 6, padding: "3px 10px", border: mp < 15 ? "1px solid #ef4444" : "1px solid transparent" }} title="Management Points — spend on actions, regenerates as ecosystem improves">
+            <span style={{ fontSize: 10, color: "#fbbf24", fontWeight: 700 }}>MP</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: mp < 15 ? "#ef4444" : mp < 40 ? "#eab308" : "#fbbf24", fontVariantNumeric: "tabular-nums" }}>
+              {Math.floor(mp)}
+            </span>
+            <div style={{ width: 60, height: 5, background: "#334155", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${Math.min(100, (mp / 100) * 100)}%`, background: mp < 15 ? "#ef4444" : mp < 40 ? "#eab308" : "#fbbf24", borderRadius: 3, transition: "width 0.3s, background 0.3s" }} />
+            </div>
+          </div>
+        )}
+
+        {/* Scenario pill */}
+        {gameState === "playing" && (() => {
+          const sc = SCENARIOS.find(s => s.id === scenarioId);
+          return sc ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 4, background: "#1e293b", borderRadius: 6, padding: "3px 10px" }} title={sc.blurb}>
+              <span style={{ fontSize: 14 }}>{sc.emoji}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#cbd5e1" }}>{sc.title}</span>
+            </div>
+          ) : null;
+        })()}
+
         {/* Sim controls */}
         {gameState === "ready" ? (
           <button onClick={handleStartGame} style={S.btnSolid("#16a34a")}>▶ Start</button>
@@ -3569,21 +3994,53 @@ export default function Simulation() {
 
               {/* Species buttons */}
               <div style={{ flex: 1, overflowY: "auto", padding: "0 6px" }}>
-                {SPECIES.map(sp => (
-                  <button key={sp.type} onClick={() => setSelectedTool(sp.type)} style={{
-                    display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "5px 7px", borderRadius: 6, marginBottom: 2,
-                    border: selectedTool === sp.type ? `2px solid ${sp.color}` : "2px solid transparent",
-                    background: selectedTool === sp.type ? `${sp.color}15` : "transparent",
-                    color: "#e2e8f0", cursor: "pointer", textAlign: "left",
-                  }}>
-                    <span style={{ fontSize: 15 }}>{sp.icon}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11, fontWeight: 600 }}>{sp.label}</div>
-                      <div style={{ fontSize: 9, color: "#64748b" }}>{stats[sp.key] ?? 0}</div>
-                    </div>
-                  </button>
-                ))}
+                {SPECIES.map(sp => {
+                  const cost = MP_COSTS[sp.type] ?? 0;
+                  const canAfford = mp >= cost || gameState !== "playing";
+                  return (
+                    <button key={sp.type} onClick={() => setSelectedTool(sp.type)} disabled={!canAfford} style={{
+                      display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "5px 7px", borderRadius: 6, marginBottom: 2,
+                      border: selectedTool === sp.type ? `2px solid ${sp.color}` : "2px solid transparent",
+                      background: selectedTool === sp.type ? `${sp.color}15` : "transparent",
+                      color: "#e2e8f0", cursor: canAfford ? "pointer" : "not-allowed", textAlign: "left",
+                      opacity: canAfford ? 1 : 0.45,
+                    }}>
+                      <span style={{ fontSize: 15 }}>{sp.icon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600 }}>{sp.label}</div>
+                        <div style={{ fontSize: 9, color: "#64748b" }}>{stats[sp.key] ?? 0} · <span style={{ color: "#fbbf24" }}>{cost} MP</span></div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* Special Actions */}
+              {gameState === "playing" && (
+                <div style={{ padding: "4px 6px", borderTop: "1px solid #1e293b", marginTop: 4 }}>
+                  <div style={{ fontSize: 8, color: "#64748b", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", padding: "4px 2px 2px" }}>Ranger Actions</div>
+                  {[
+                    { id: "cull_elk", label: "Cull 5 Elk", icon: "🎯", cost: MP_ACTION_COSTS.cull_elk, handler: handleCullElk, color: "#a78bfa" },
+                    { id: "habitat_restore", label: "Restore Habitat", icon: "🌱", cost: MP_ACTION_COSTS.habitat_restore, handler: handleHabitatRestore, color: "#22c55e" },
+                    { id: "ranger_patrol", label: "Ranger Patrol", icon: "🚔", cost: MP_ACTION_COSTS.ranger_patrol, handler: handleRangerPatrol, color: "#3b82f6" },
+                  ].map(a => {
+                    const canAfford = mp >= a.cost;
+                    return (
+                      <button key={a.id} onClick={a.handler} disabled={!canAfford} style={{
+                        display: "flex", alignItems: "center", gap: 6, width: "100%", padding: "4px 7px", borderRadius: 6, marginBottom: 2,
+                        border: `1px solid ${canAfford ? a.color + "40" : "#33415530"}`,
+                        background: canAfford ? a.color + "10" : "transparent",
+                        color: canAfford ? "#e2e8f0" : "#475569", cursor: canAfford ? "pointer" : "not-allowed",
+                        textAlign: "left", fontSize: 10, opacity: canAfford ? 1 : 0.5,
+                      }}>
+                        <span style={{ fontSize: 13 }}>{a.icon}</span>
+                        <div style={{ flex: 1, fontWeight: 600 }}>{a.label}</div>
+                        <span style={{ fontSize: 9, color: "#fbbf24", fontWeight: 700 }}>{a.cost}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Locked species (hunters - auto-controlled) */}
               <div style={{ padding: "2px 6px", marginTop: 2 }}>
@@ -3754,6 +4211,7 @@ export default function Simulation() {
               <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
                 {[
                   { key: "predprey", label: "Predator/Prey" },
+                  { key: "meso", label: "Mesopredators" },
                   { key: "habitat", label: "Habitat" },
                   { key: "balance", label: "Score" },
                 ].map(t => (
@@ -3771,19 +4229,42 @@ export default function Simulation() {
                     Run simulation to see trends...
                   </div>
                 ) : chartTab === "predprey" ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={history}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis dataKey="t" stroke="#475569" fontSize={8} tickLine={false} />
-                      <YAxis stroke="#475569" fontSize={8} tickLine={false} />
-                      <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 6, fontSize: 9 }} />
-                      <Legend wrapperStyle={{ fontSize: 9 }} />
-                      <Line type="monotone" dataKey="wolves" stroke="#94a3b8" strokeWidth={2} dot={false} name="Wolves" />
-                      <Line type="monotone" dataKey="elk" stroke="#a78bfa" strokeWidth={2} dot={false} name="Elk" />
-                      <Line type="monotone" dataKey="coyotes" stroke="#d97706" strokeWidth={1.5} dot={false} name="Coyotes" strokeDasharray="4 2" />
-                      <Line type="monotone" dataKey="rabbits" stroke="#d1d5db" strokeWidth={1} dot={false} name="Rabbits" strokeDasharray="2 2" />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+                    <div style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 700, textAlign: "center", padding: "2px 0 0" }}>
+                      Predator-Prey Dynamics
+                      <div style={{ fontSize: 8, color: "#64748b", fontWeight: 400 }}>Lotka-Volterra Oscillation</div>
+                    </div>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={history} margin={{ top: 6, right: 10, left: 22, bottom: 18 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis dataKey="t" stroke="#475569" fontSize={8} tickLine={false} label={{ value: "Time (simulated years)", position: "insideBottom", offset: -4, fill: "#64748b", fontSize: 8 }} />
+                        <YAxis stroke="#475569" fontSize={8} tickLine={false} label={{ value: "Population Density", angle: -90, position: "insideLeft", offset: 10, fill: "#64748b", fontSize: 8, style: { textAnchor: "middle" } }} />
+                        <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 6, fontSize: 9 }} />
+                        <Legend wrapperStyle={{ fontSize: 9, paddingLeft: 8 }} verticalAlign="top" align="right" />
+                        <Line type="natural" dataKey="elk" stroke="#eab308" strokeWidth={3} dot={false} name="Prey (Elk)" />
+                        <Line type="natural" dataKey="wolves" stroke="#1e40af" strokeWidth={3} dot={false} name="Predator (Wolves)" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : chartTab === "meso" ? (
+                  <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+                    <div style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 700, textAlign: "center", padding: "2px 0 0" }}>
+                      Mesopredators & Small Prey
+                      <div style={{ fontSize: 8, color: "#64748b", fontWeight: 400 }}>Watch coyotes boom when wolves decline</div>
+                    </div>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={history} margin={{ top: 6, right: 10, left: 10, bottom: 14 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis dataKey="t" stroke="#475569" fontSize={8} tickLine={false} />
+                        <YAxis stroke="#475569" fontSize={8} tickLine={false} />
+                        <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 6, fontSize: 9 }} />
+                        <Legend wrapperStyle={{ fontSize: 9 }} />
+                        <Line type="natural" dataKey="coyotes" stroke="#d97706" strokeWidth={2} dot={false} name="Coyotes" />
+                        <Line type="natural" dataKey="rabbits" stroke="#d1d5db" strokeWidth={2} dot={false} name="Rabbits" />
+                        <Line type="natural" dataKey="birds" stroke="#fbbf24" strokeWidth={2} dot={false} name="Songbirds" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
                 ) : chartTab === "habitat" ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={history}>
@@ -3869,10 +4350,14 @@ export default function Simulation() {
       {gameState === "lost" && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
           <div style={{ background: "linear-gradient(135deg, #2a0f0f, #1e293b)", borderRadius: 16, padding: m ? 20 : 32, maxWidth: m ? "90vw" : 500, margin: 20, border: "2px solid #ef4444", textAlign: "center" }}>
-            <div style={{ fontSize: m ? 36 : 48, marginBottom: 12 }}>💀🏜️</div>
-            <h2 style={{ fontSize: m ? 18 : 24, fontWeight: 800, margin: "0 0 8px", color: "#fca5a5" }}>Ecosystem Collapsed</h2>
+            <div style={{ fontSize: m ? 36 : 48, marginBottom: 12 }}>{lossReason === "collapse" ? "🏜️💀" : "⏰💀"}</div>
+            <h2 style={{ fontSize: m ? 18 : 24, fontWeight: 800, margin: "0 0 8px", color: "#fca5a5" }}>
+              {lossReason === "collapse" ? "Ecosystem Collapsed" : "Time Expired"}
+            </h2>
             <p style={{ fontSize: m ? 12 : 14, color: "#cbd5e1", lineHeight: 1.6, margin: "0 0 16px" }}>
-              Time ran out before you could stabilize the ecosystem. The balance score needed to reach {WIN_THRESHOLD} and hold for {Math.round(WIN_STREAK_NEEDED / 60)} seconds.
+              {lossReason === "collapse"
+                ? `The balance score stayed below ${COLLAPSE_THRESHOLD} for too long. The ecosystem is past the point of recovery.`
+                : `Time ran out before you could stabilize the ecosystem. You needed ${WIN_THRESHOLD}+ balance held for ${Math.round(WIN_STREAK_NEEDED / 60)} seconds.`}
             </p>
             <p style={{ fontSize: m ? 10 : 12, color: "#94a3b8", margin: "0 0 8px", lineHeight: 1.5 }}>
               <strong>Your final score:</strong> <span style={{ color: getScoreColor(score), fontWeight: 700, fontSize: m ? 14 : 16 }}>{score}</span>
@@ -3892,30 +4377,62 @@ export default function Simulation() {
         </div>
       )}
 
-      {/* ═══ INTRO / HELP MODAL ═══ */}
+      {/* ═══ INTRO / SCENARIO PICKER MODAL ═══ */}
       {showHelp && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => { setShowHelp(false); playIntroNarration(); handleStartGame(); }}>
-          <div style={{ background: "linear-gradient(135deg, #0f172a, #1e293b)", borderRadius: 16, padding: m ? "20px 18px 16px" : "28px 28px 20px", maxWidth: m ? "90vw" : 500, margin: 16, border: "1px solid #334155", textAlign: "center", maxHeight: m ? "90vh" : "auto", overflowY: m ? "auto" : "visible" }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: m ? 32 : 40, marginBottom: 8 }}>🐺🏔️</div>
-            <h2 style={{ fontSize: m ? 16 : 20, fontWeight: 800, margin: "0 0 6px", background: "linear-gradient(135deg, #ef4444, #f97316)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-              Yellowstone, 1926
-            </h2>
-            <p style={{ fontSize: m ? 11 : 13, color: "#94a3b8", margin: "0 0 14px", fontStyle: "italic" }}>The last wolf has been killed.</p>
-
-            <div style={{ fontSize: m ? 11 : 12, lineHeight: 1.7, color: "#cbd5e1", textAlign: "left" }}>
-              <p style={{ margin: "0 0 10px" }}>The U.S. government has systematically exterminated every wolf in Yellowstone. Elk herds are exploding, devouring the willows and aspens. Rivers are eroding. The ecosystem is collapsing.</p>
-              <p style={{ margin: "0 0 10px" }}><strong style={{ color: "#60a5fa" }}>Your mission:</strong> Restore the ecosystem by reintroducing species. Reach a balance score of <strong>{WIN_THRESHOLD}+</strong> and hold it steady for <strong>{Math.round(WIN_STREAK_NEEDED / 60)}s</strong> to win. You have <strong>{Math.round(GAME_DURATION / 60)}s</strong> ({Math.round(GAME_DURATION / 3600)} minutes) before the ecosystem collapses beyond recovery.</p>
-              <p style={{ margin: "0 0 10px", padding: m ? "6px 10px" : "8px 12px", background: "#0f172a", borderRadius: 8, fontSize: m ? 9 : 11 }}>
-                <strong style={{ color: "#60a5fa" }}>The Cascade:</strong> Wolves → Elk → Vegetation → Rivers → Beavers/Fish/Songbirds
-                <br />
-                <strong style={{ color: "#f97316" }}>Side Effect:</strong> No wolves → Coyote boom → Rabbit/bird decline
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 12 }}>
+          <div style={{ background: "linear-gradient(135deg, #0f172a, #1e293b)", borderRadius: 16, padding: m ? "18px 16px 14px" : "24px 28px 20px", maxWidth: m ? "94vw" : 720, width: "100%", margin: 12, border: "1px solid #334155", maxHeight: "92vh", overflowY: "auto" }}>
+            <div style={{ textAlign: "center", marginBottom: m ? 10 : 14 }}>
+              <div style={{ fontSize: m ? 28 : 36, marginBottom: 4 }}>🐺🏔️</div>
+              <h2 style={{ fontSize: m ? 16 : 22, fontWeight: 800, margin: "0 0 4px", background: "linear-gradient(135deg, #ef4444, #f97316)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+                Yellowstone Wolf Crisis
+              </h2>
+              <p style={{ fontSize: m ? 10 : 12, color: "#94a3b8", margin: "0 0 4px" }}>
+                Reach <strong style={{ color: "#22c55e" }}>{WIN_THRESHOLD}+</strong> balance, hold <strong>{Math.round(WIN_STREAK_NEEDED / 60)}s</strong>. <strong>{Math.round(GAME_DURATION / 60)}s</strong> time limit. Spend <strong style={{ color: "#fbbf24" }}>Management Points</strong> on actions. <strong style={{ color: "#ef4444" }}>Score below {COLLAPSE_THRESHOLD}</strong> for too long = collapse.
               </p>
-              <p style={{ margin: "0 0 6px", fontSize: m ? 9 : 11, color: "#64748b" }}>Select species from the panel, then click the map to place them. The timer starts when you begin!</p>
             </div>
-            <button onClick={() => { setShowHelp(false); playIntroNarration(); handleStartGame(); }} style={{ width: "100%", padding: m ? "10px 0" : "12px 0", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 13 : 15, cursor: "pointer", marginTop: 10 }}>
-              Begin Restoration
-            </button>
+            <div style={{ fontSize: m ? 10 : 11, color: "#64748b", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", margin: "0 0 8px", textAlign: "center" }}>Choose Your Scenario</div>
+            <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "repeat(auto-fit, minmax(280px, 1fr))", gap: m ? 8 : 10 }}>
+              {SCENARIOS.map(sc => (
+                <button
+                  key={sc.id}
+                  onClick={() => { setShowHelp(false); setScenarioId(sc.id); startScenario(sc); }}
+                  style={{
+                    padding: m ? "10px 12px" : "12px 14px",
+                    borderRadius: 10,
+                    border: scenarioId === sc.id ? "2px solid #22c55e" : "1px solid #334155",
+                    background: "linear-gradient(135deg, #0f172a, #1e293b)",
+                    color: "#e2e8f0",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: m ? 18 : 22 }}>{sc.emoji}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: m ? 12 : 14, fontWeight: 700, color: "#fff" }}>{sc.title}</div>
+                      <div style={{ fontSize: m ? 9 : 10, color: "#64748b" }}>{sc.year} · <span style={{ color: sc.difficulty === "Hard" ? "#ef4444" : sc.difficulty === "Medium" ? "#eab308" : "#22c55e" }}>{sc.difficulty}</span> · {sc.startMp} MP</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: m ? 10 : 11, color: "#cbd5e1", lineHeight: 1.4, marginBottom: 4 }}>{sc.blurb}</div>
+                  <div style={{ fontSize: m ? 9 : 10, color: "#64748b", fontStyle: "italic" }}>Teaches: {sc.learning}</div>
+                </button>
+              ))}
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* ═══ REAL-WORLD DATA CARD ═══ */}
+      {dataCard && (
+        <div style={{ position: "fixed", top: m ? 58 : 78, right: m ? 8 : 16, maxWidth: m ? 280 : 340, background: "linear-gradient(135deg, #0c1d3a, #1e293b)", borderRadius: 10, padding: m ? "10px 12px" : "12px 14px", border: "1px solid #3b82f6", boxShadow: "0 4px 16px rgba(59, 130, 246, 0.3)", zIndex: 50, animation: "fadeInUp 0.4s ease-out" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+            <div style={{ fontSize: m ? 9 : 10, color: "#60a5fa", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>Real Yellowstone Data</div>
+            <button onClick={() => setDataCard(null)} style={{ background: "none", border: "none", color: "#64748b", fontSize: 14, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+          </div>
+          <div style={{ fontSize: m ? 11 : 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>{dataCard.title}</div>
+          <div style={{ fontSize: m ? 10 : 11, color: "#fbbf24", marginBottom: 6 }}>Your game: <strong>{dataCard.yourStat(stats)}</strong></div>
+          <div style={{ fontSize: m ? 10 : 11, color: "#cbd5e1", lineHeight: 1.5, background: "#0f172a", padding: "6px 8px", borderRadius: 6 }}>{dataCard.realStat}</div>
         </div>
       )}
     </div>
