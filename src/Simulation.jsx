@@ -3463,6 +3463,10 @@ export default function Simulation() {
         setLossReason(null);
         setRunning(false);
         setHealthyStreak(healthyStreakRef.current);
+        // Play win reflection audio (silent if file missing)
+        if (narratorEnabled) {
+          narrator.speak("win_reflection", "Real Yellowstone's cascade took fifteen years, from 1995 to 2010. You did it in minutes.", "data_win_reflection_0.mp3");
+        }
       }
       // Loss: ecosystem collapsed (sustained very low score)
       else if (collapseStreakRef.current >= COLLAPSE_DURATION) {
