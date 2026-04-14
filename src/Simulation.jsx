@@ -3607,7 +3607,7 @@ export default function Simulation() {
   const [lossReason, setLossReason] = useState(null); // "time" | "collapse"
   const [healthyStreak, setHealthyStreak] = useState(0); // consecutive ticks in "healthy" zone
   const GAME_DURATION = 36000; // 10 min at 60fps (600 seconds)
-  const WIN_THRESHOLD = 80; // balance score needed
+  const WIN_THRESHOLD = 75; // balance score needed
   const WIN_STREAK_NEEDED = 900; // must hold healthy for 15 seconds (900 frames)
   const COLLAPSE_THRESHOLD = 25; // score below this = collapse risk
   const COLLAPSE_DURATION = 1800; // 30 seconds below threshold = loss
