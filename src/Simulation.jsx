@@ -176,6 +176,8 @@ function updateWolf(w, eco) {
       eco.entities.push(createEntity(WOLF, w.x + rand(-20, 20), w.y + rand(-20, 20), eco.W, eco.H));
       w.energy -= 40;
       eco.particles.push({ type: "birth", x: w.x, y: w.y, color: "#94a3b8", icon: "🐺", age: 0, maxAge: 80 });
+      // Pup birth narration — NarratorManager cooldown (20s/insight) prevents spam
+      narrator.speak("pup_birth", "A new litter of pups has been born.", "event_pup_birth_0.mp3");
     }
   }
 }
@@ -3081,13 +3083,14 @@ const MP_ACTION_COSTS = {
   ranger_patrol: 15,   // clear all hunters from map
 };
 
-// Regen per tick (60 ticks = 1 second) based on score tier
-// Tier thresholds: below 30 → trickle, 30-49 → slow, 50-69 → medium, 70+ → fast
+// Regen per tick (60 ticks = 1 second) based on score tier.
+// Tuned generously for 5-10 min gameplay target. Even at low scores the player
+// can always act. At high scores, MP floods in to reward momentum.
 function mpRegenPerSec(score) {
-  if (score >= 70) return 0.50;  // 30 MP/min
-  if (score >= 50) return 0.33;  // 20 MP/min
-  if (score >= 30) return 0.22;  // ~13 MP/min
-  return 0.16;                    // ~10 MP/min — always regens so no soft-lock
+  if (score >= 70) return 1.50;  // 90 MP/min — thriving, fast iteration
+  if (score >= 50) return 1.00;  // 60 MP/min — stable, comfortable play
+  if (score >= 30) return 0.75;  // 45 MP/min — recovering, moderate pace
+  return 0.50;                    // 30 MP/min — crashed but not stuck
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3101,7 +3104,7 @@ const SCENARIOS = [
     emoji: "🐺",
     year: "1995",
     difficulty: "Standard",
-    startMp: 100,
+    startMp: 140,
     blurb: "The canonical crisis. Wolves are gone. Elk dominate. Restore the cascade.",
     learning: "Trophic cascade, keystone species, predator-prey dynamics",
     ecosystemStart: "noWolves",
@@ -3114,7 +3117,7 @@ const SCENARIOS = [
     emoji: "🧬",
     year: "2024",
     difficulty: "Hard",
-    startMp: 120,
+    startMp: 160,
     blurb: "CWD is spreading through the elk herd. Dense populations die faster. Keep the ecosystem balanced without stockpiling prey.",
     learning: "Disease ecology, density-dependent mortality",
     ecosystemStart: "balanced",
@@ -3127,7 +3130,7 @@ const SCENARIOS = [
     emoji: "☀️",
     year: "2021",
     difficulty: "Hard",
-    startMp: 110,
+    startMp: 150,
     blurb: "Rivers shrink, grass wilts, fish struggle. Balance the ecosystem on half the water.",
     learning: "Abiotic factors, climate stress, ecosystem resilience",
     ecosystemStart: "noWolves",
@@ -3140,7 +3143,7 @@ const SCENARIOS = [
     emoji: "🎯",
     year: "2008",
     difficulty: "Hard",
-    startMp: 100,
+    startMp: 140,
     blurb: "Poachers target wolves. Deploy ranger patrols. Keep packs alive against human pressure.",
     learning: "Human-wildlife conflict, conservation policy",
     ecosystemStart: "balanced",
@@ -3153,7 +3156,7 @@ const SCENARIOS = [
     emoji: "🚗",
     year: "2019",
     difficulty: "Medium",
-    startMp: 110,
+    startMp: 150,
     blurb: "A highway corridor fragments the habitat. Wolves avoid it. Design around the wall of human presence.",
     learning: "Habitat fragmentation, edge effects",
     ecosystemStart: "noWolves",
@@ -3227,6 +3230,7 @@ function applyScenarioEffects(eco, scenarioId, scenarioTick) {
           e.alive = false;
           eco.particles.push({ type: "kill", x: e.x, y: e.y, color: "#7c3aed", icon: "🦠", age: 0, maxAge: 90 });
         }
+        narrator.speak("cwd_spread", "Chronic Wasting Disease is spreading.", "event_cwd_spread_0.mp3");
       }
     }
   } else if (scenarioId === "drought") {
@@ -3236,7 +3240,14 @@ function applyScenarioEffects(eco, scenarioId, scenarioTick) {
     if (scenarioTick % 2700 === 0 && scenarioTick > 0) {
       eco.vegetationHealth = clamp(eco.vegetationHealth - 8, 0, 100);
       eco.riverHealth = clamp(eco.riverHealth - 6, 0, 100);
+      narrator.speak("drought_dry_spell", "Another dry spell.", "event_drought_dry_spell_0.mp3");
     }
+    // River critical narration — fires when riverHealth first drops below 20
+    if (eco.riverHealth < 20 && !eco._riverCriticalFired) {
+      eco._riverCriticalFired = true;
+      narrator.speak("drought_river_critical", "The river is critical.", "event_drought_river_critical_0.mp3");
+    }
+    if (eco.riverHealth > 35) eco._riverCriticalFired = false;
   } else if (scenarioId === "poaching") {
     // Poaching: hunters spawn 3x more aggressively and specifically pursue wolves
     if (scenarioTick % 600 === 0 && scenarioTick > 0) {
@@ -3250,11 +3261,22 @@ function applyScenarioEffects(eco, scenarioId, scenarioTick) {
         }
       }
     }
+    // Wolf loss to hunter — check periodically if wolf count dropped suddenly with hunters present
+    if (scenarioTick % 180 === 0) {
+      const wolvesAlive = eco.entities.filter(e => e.type === WOLF && e.alive).length;
+      const huntersAlive = eco.entities.filter(e => e.type === HUNTER && e.alive).length;
+      const prevWolves = eco._lastWolfCountPoach ?? wolvesAlive;
+      if (huntersAlive > 0 && wolvesAlive < prevWolves && prevWolves - wolvesAlive >= 1) {
+        narrator.speak("poach_wolf_lost", "A wolf has been taken by poachers.", "event_poach_wolf_lost_0.mp3");
+      }
+      eco._lastWolfCountPoach = wolvesAlive;
+    }
   } else if (scenarioId === "tourism") {
     // Tourism corridor: a vertical band through the middle of the map
     // stresses animals that enter it. Width = 15% of canvas, centered at 40%.
     const corridorX = eco.W * 0.40;
     const corridorW = eco.W * 0.15;
+    let enteredCorridor = false;
     for (const e of eco.entities) {
       if (!e.alive) continue;
       if (e.type === WOLF || e.type === BEAR) {
@@ -3265,7 +3287,61 @@ function applyScenarioEffects(eco, scenarioId, scenarioTick) {
           // Nudge them out
           const push = e.x < corridorX ? -0.8 : 0.8;
           e.vx = (e.vx || 0) + push;
+          enteredCorridor = true;
         }
+      }
+    }
+    // Corridor stress narration — cooldown-managed by NarratorManager
+    if (enteredCorridor && scenarioTick % 90 === 0) {
+      narrator.speak("tourism_corridor", "Animals entering the tourist corridor are stressed.", "event_tourism_corridor_0.mp3");
+    }
+    // Fragmentation narration — periodic reminder
+    if (scenarioTick % 3600 === 0 && scenarioTick > 0) {
+      narrator.speak("tourism_fragmentation", "The corridor is fragmenting the habitat.", "event_tourism_fragmentation_0.mp3");
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GLOBAL EVENTS — fire in any scenario (winter kill, wildfire)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function applyGlobalEvents(eco, tick) {
+  // Winter kill: every ~2 minutes (7200 ticks), cull weakest 8-12% of elk if herd is large
+  if (tick > 0 && tick % 7200 === 0) {
+    const elks = eco.entities.filter(e => e.type === ELK && e.alive);
+    if (elks.length >= 35) {
+      // Kill 8-12% of the herd — target lowest-energy elk (simulates weak animals not surviving winter)
+      const killCount = Math.floor(elks.length * (0.08 + Math.random() * 0.04));
+      elks.sort((a, b) => (a.energy ?? 100) - (b.energy ?? 100));
+      for (let i = 0; i < killCount; i++) {
+        elks[i].alive = false;
+        eco.particles.push({ type: "kill", x: elks[i].x, y: elks[i].y, color: "#e0e7ff", icon: "❄️", age: 0, maxAge: 90 });
+      }
+      narrator.speak("winter_kill", "Harsh winter.", "event_winter_kill_0.mp3");
+    }
+  }
+
+  // Wildfire: ~0.3% chance per 600 ticks (~10s) check, only if veg is abundant
+  if (tick > 0 && tick % 600 === 0) {
+    const trees = eco.entities.filter(e => e.type === TREE && e.alive);
+    if (trees.length >= 45 && Math.random() < 0.18) {
+      // Pick a random fire center; burn trees within radius
+      const center = trees[Math.floor(Math.random() * trees.length)];
+      const radius = 120;
+      let burned = 0;
+      for (const t of trees) {
+        const dx = t.x - center.x, dy = t.y - center.y;
+        if (dx * dx + dy * dy < radius * radius) {
+          t.health = 0;
+          t.alive = false;
+          eco.particles.push({ type: "kill", x: t.x, y: t.y, color: "#f97316", icon: "🔥", age: 0, maxAge: 120 });
+          burned++;
+          if (burned >= 10) break; // cap per event
+        }
+      }
+      if (burned > 0) {
+        narrator.speak("wildfire", "Wildfire in the aspen grove.", "event_wildfire_0.mp3");
       }
     }
   }
@@ -3325,6 +3401,10 @@ export default function Simulation() {
   const [mp, setMp] = useState(100);
   const mpRef = useRef(100);
   const mpRegenTickRef = useRef(0);
+  // Latch state so MP voice lines fire once per state transition, not every tick
+  const mpStateRef = useRef({ wasLow: false, wasDepleted: false, wasFast: false, wasPenalty: false });
+  // Global event tick tracking
+  const globalEventTickRef = useRef(0);
 
   // Scenario system
   const [scenarioId, setScenarioId] = useState("reintro");
@@ -3427,12 +3507,44 @@ export default function Simulation() {
       mpRegenTickRef.current += speed;
       const regenPerSec = mpRegenPerSec(eco.balanceScore);
       const mpPerTick = regenPerSec / 60; // ticks per sec = 60
-      mpRef.current = Math.min(200, mpRef.current + mpPerTick);
+      mpRef.current = Math.min(300, mpRef.current + mpPerTick);
       if (mpRegenTickRef.current % 30 === 0) setMp(Math.floor(mpRef.current));
+
+      // MP state transition narration (latched — fires once per transition)
+      const mpS = mpStateRef.current;
+      const mpNow = mpRef.current;
+      // Depleted (MP near 0)
+      if (mpNow <= 2 && !mpS.wasDepleted && gameTimerRef.current > 600) {
+        mpS.wasDepleted = true;
+        narrator.speak("mp_depleted", "You're out of management points.", "mp_depleted_0.mp3");
+      }
+      if (mpNow >= 20) mpS.wasDepleted = false;
+      // Low warning (first dip below 20, hasn't been depleted yet)
+      if (mpNow < 20 && mpNow > 2 && !mpS.wasLow && !mpS.wasDepleted && gameTimerRef.current > 600) {
+        mpS.wasLow = true;
+        narrator.speak("mp_low", "Management points running low.", "mp_low_0.mp3");
+      }
+      if (mpNow >= 35) mpS.wasLow = false;
+      // Fast regen (ecosystem thriving)
+      if (eco.balanceScore >= 70 && !mpS.wasFast && gameTimerRef.current > 1200) {
+        mpS.wasFast = true;
+        narrator.speak("mp_fast", "The ecosystem is thriving.", "mp_earned_fast_0.mp3");
+      }
+      if (eco.balanceScore < 60) mpS.wasFast = false;
+      // Penalty (score in collapse zone)
+      if (eco.balanceScore < COLLAPSE_THRESHOLD && !mpS.wasPenalty) {
+        mpS.wasPenalty = true;
+        narrator.speak("mp_penalty", "The ecosystem is collapsing.", "mp_penalty_0.mp3");
+      }
+      if (eco.balanceScore > 40) mpS.wasPenalty = false;
 
       // Scenario-specific effects
       scenarioEventTickRef.current += speed;
       applyScenarioEffects(eco, scenarioId, scenarioEventTickRef.current);
+
+      // Global events (winter kill, wildfire) — active in any scenario
+      globalEventTickRef.current += speed;
+      applyGlobalEvents(eco, globalEventTickRef.current);
 
       // Check for real-world data moment triggers every 180 ticks (3s)
       if (eco.tick % 180 === 0 && !dataCard) {
@@ -3609,6 +3721,7 @@ export default function Simulation() {
     }
     mpRef.current -= MP_ACTION_COSTS.ranger_patrol;
     setMp(mpRef.current);
+    narrator.speak("poach_ranger_dispatched", "Ranger patrol dispatched.", "event_poach_ranger_dispatched_0.mp3");
   };
 
   function recountStats(eco) {
@@ -3921,7 +4034,7 @@ export default function Simulation() {
               {Math.floor(mp)}
             </span>
             <div style={{ width: 60, height: 5, background: "#334155", borderRadius: 3, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${Math.min(100, (mp / 100) * 100)}%`, background: mp < 15 ? "#ef4444" : mp < 40 ? "#eab308" : "#fbbf24", borderRadius: 3, transition: "width 0.3s, background 0.3s" }} />
+              <div style={{ height: "100%", width: `${Math.min(100, (mp / 150) * 100)}%`, background: mp < 15 ? "#ef4444" : mp < 40 ? "#eab308" : "#fbbf24", borderRadius: 3, transition: "width 0.3s, background 0.3s" }} />
             </div>
           </div>
         )}
