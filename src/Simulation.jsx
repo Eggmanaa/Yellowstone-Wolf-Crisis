@@ -4394,8 +4394,8 @@ export default function Simulation() {
                         <YAxis stroke="#475569" fontSize={8} tickLine={false} label={{ value: "Population Density", angle: -90, position: "insideLeft", offset: 10, fill: "#64748b", fontSize: 8, style: { textAnchor: "middle" } }} />
                         <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 6, fontSize: 9 }} />
                         <Legend wrapperStyle={{ fontSize: 9, paddingLeft: 8 }} verticalAlign="top" align="right" />
-                        <Line type="natural" dataKey="elk" stroke="#eab308" strokeWidth={3} dot={false} name="Prey (Elk)" />
-                        <Line type="natural" dataKey="wolves" stroke="#1e40af" strokeWidth={3} dot={false} name="Predator (Wolves)" />
+                        <Line type="natural" dataKey="elk" stroke="#fbbf24" strokeWidth={3} dot={false} name="Prey (Elk)" isAnimationActive={false} />
+                        <Line type="natural" dataKey="wolves" stroke="#3b82f6" strokeWidth={3} dot={false} name="Predator (Wolves)" isAnimationActive={false} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
