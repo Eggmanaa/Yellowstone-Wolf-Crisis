@@ -15,6 +15,18 @@ const randInt = (lo, hi) => Math.floor(rand(lo, hi + 1));
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const lerp = (a, b, t) => a + (b - a) * t;
 
+// Ideal-population score — used for species with a meaningful "ideal" count.
+// At count=0: 0 pts (absence is bad).
+// At count=ideal: max pts.
+// At count=2×ideal: 0 pts (overpopulation cancels benefit).
+// Beyond 2×ideal: gentle negative (overpop penalty, dragging down overall score).
+function popScore(count, ideal, maxPts, overpopMult = 0.5) {
+  if (count <= 0) return 0;
+  if (count <= ideal) return (count / ideal) * maxPts;
+  if (count <= ideal * 2) return (1 - (count - ideal) / ideal) * maxPts;
+  return -((count - ideal * 2) / ideal) * maxPts * overpopMult;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 const WOLF = "wolf", ELK = "elk", TREE = "tree", BEAVER = "beaver",
   COYOTE = "coyote", FISH = "fish", BIRD = "bird", RABBIT = "rabbit",
@@ -728,17 +740,21 @@ function tickEcosystem(eco) {
     };
     eco.stats = stats;
 
-    const ws = clamp(stats.wolves / 15, 0, 1) * 15 - (stats.wolves > 32 ? (stats.wolves - 32) * 0.3 : 0);
-    const es = (1 - Math.abs(stats.elk - 38) / 38) * 15;
-    const ts = clamp(stats.trees / 85, 0, 1) * 20;
-    const rs = (eco.riverHealth / 100) * 15;
-    const bs = clamp(stats.beavers / 8, 0, 1) * 10;
-    const bis = clamp(stats.birds / 12, 0, 1) * 8;
-    const fs = clamp(stats.fish / 18, 0, 1) * 7;
-    const cs = (1 - Math.abs(stats.coyotes - 8) / 20) * 5;
-    const rbs = (1 - Math.abs(stats.rabbits - 22) / 30) * 5;
-    const brs = clamp(stats.bears / 6, 0, 1) * 5; // bears contribute to balance
-    eco.balanceScore = clamp(Math.round(ws + es + ts + rs + bs + bis + fs + cs + rbs + brs), 0, 100);
+    // Balance score components — total budget 105, clamped to 0-100.
+    // Every species earns 0 pts when absent, max at ideal population, drops back
+    // to 0 at 2x ideal, negative beyond (gentle overpop penalty).
+    const ws = clamp(stats.wolves / 15, 0, 1) * 15 - (stats.wolves > 32 ? (stats.wolves - 32) * 0.3 : 0);  // wolves: plateau 15-32, overpop penalty after
+    const es = popScore(stats.elk, 38, 15);      // elk (primary herbivore)
+    const ts = clamp(stats.trees / 85, 0, 1) * 15;  // tree count (15, was 20)
+    const vs = (eco.vegetationHealth / 100) * 5;    // vegetation HEALTH as its own component (NEW)
+    const rs = (eco.riverHealth / 100) * 15;        // river health
+    const bs = clamp(stats.beavers / 8, 0, 1) * 10; // beavers (ecosystem engineer)
+    const bis = clamp(stats.birds / 12, 0, 1) * 8;  // songbirds
+    const fs = clamp(stats.fish / 18, 0, 1) * 7;    // fish
+    const cs = popScore(stats.coyotes, 8, 5);       // coyotes (FIXED: zero=0, was zero=3)
+    const rbs = popScore(stats.rabbits, 22, 5);     // rabbits (FIXED: zero=0, was zero=1.3)
+    const brs = clamp(stats.bears / 6, 0, 1) * 5;   // bears
+    eco.balanceScore = clamp(Math.round(ws + es + ts + vs + rs + bs + bis + fs + cs + rbs + brs), 0, 100);
 
     if (eco.history.length > 200) eco.history.shift();
     eco.history.push({ t: eco.history.length, ...stats, score: eco.balanceScore });
