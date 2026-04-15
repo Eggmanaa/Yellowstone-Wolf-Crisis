@@ -810,6 +810,15 @@ function lerpColor(a, b, t) {
   return `#${((rr << 16) | (rg << 8) | rb).toString(16).padStart(6, "0")}`;
 }
 
+// Convert a hex color (#rrggbb) to rgba(...) with the given alpha 0..1
+function hexA(hex, a) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
 function renderEcosystem(ctx, eco) {
   const { W, H, vegetationHealth: vh, riverHealth: rh, riverWidth: rw, tick } = eco;
   const vf = vh / 100;
@@ -817,13 +826,24 @@ function renderEcosystem(ctx, eco) {
   const MX = W * TERRAIN.mountainStartPct;
   const scaledRW = rw * (W / 960);  // scale river width to canvas
 
+  // ─── PER-SCENARIO PALETTE TINT — applied at end as overlay ─────────────
+  const sid = eco.scenarioId;
+  const scenarioOverlay = sid === "drought"  ? "rgba(218,165,90,0.16)"   // sepia/dust
+                        : sid === "cwd"      ? "rgba(140,180,120,0.10)"  // sickly green
+                        : sid === "poaching" ? "rgba(160,70,70,0.08)"    // tense red wash
+                        : sid === "tourism"  ? "rgba(170,190,210,0.08)"  // hazy gray
+                        : null;
+
+  // ─── TIME-OF-DAY CYCLE — slow ambient warmth drift ─────────────────────
+  // Cycles ~every 5 simulated minutes so a 10-min game shows 2 cycles.
+  const todPhase = (Math.sin(tick * 0.00035) + 1) * 0.5; // 0=cool dawn, 1=warm noon
+  const todWarmth = 0.4 + todPhase * 0.6;
+
   // ─── FULL TERRAIN BASE (entire canvas is ground — top-down view) ──────
-  // Meadow covers left side, forest covers right of river, mountains far right
   const meadowBase = lerpColor("#3d6b2e", "#5a9a40", vf);
   const meadowDark = lerpColor("#2a4a1e", "#3d7a2e", vf);
   const meadowLight = lerpColor("#4a7a36", "#6ab54a", vf);
 
-  // Fill entire canvas with base meadow gradient
   const baseGrad = ctx.createLinearGradient(0, 0, 0, H);
   baseGrad.addColorStop(0, lerpColor("#2e5420", "#4a8a35", vf));
   baseGrad.addColorStop(0.3, meadowBase);
@@ -832,13 +852,51 @@ function renderEcosystem(ctx, eco) {
   ctx.fillStyle = baseGrad;
   ctx.fillRect(0, 0, RX - scaledRW / 2, H);
 
-  // Forest side — slightly darker, bluer green
-  const forestBase = lerpColor("#1e3a1a", "#2d5a28", vf);
+  // Forest side — DARKER, BLUER conifer canopy floor (visible distinction from meadow)
   const forestGrad = ctx.createLinearGradient(RX + scaledRW / 2, 0, MX, 0);
-  forestGrad.addColorStop(0, lerpColor("#1e4a22", "#2d6a30", vf));
-  forestGrad.addColorStop(1, lerpColor("#1a3518", "#265a24", vf));
+  forestGrad.addColorStop(0, lerpColor("#143316", "#1f4f24", vf));   // darker right at riverbank
+  forestGrad.addColorStop(0.5, lerpColor("#0f2a14", "#1a4220", vf)); // deepest canopy
+  forestGrad.addColorStop(1, lerpColor("#15321a", "#214d28", vf));   // softer toward mountains
   ctx.fillStyle = forestGrad;
   ctx.fillRect(RX + scaledRW / 2, 0, MX - RX - scaledRW / 2, H);
+
+  // Background conifer silhouettes scattered across forest side — fills emptiness
+  // These are NOT entities, just decorative background trees giving the forest density.
+  const forestStart = RX + scaledRW / 2 + 12;
+  const forestEnd = MX - 8;
+  const forestArea = forestEnd - forestStart;
+  if (forestArea > 0) {
+    for (let i = 0; i < 90; i++) {
+      // Pseudo-random scatter using deterministic hash
+      const px = forestStart + ((i * 137.508 + 23) % forestArea);
+      const py = ((i * 91.13 + 7) % H) | 0;
+      const sz = 4 + ((i * 7) % 5);
+      const shadeT = (i * 13) % 100 / 100;
+      const baseGreen = lerpColor("#0a2410", "#1a3a1f", vf);
+      const lightGreen = lerpColor("#1a4222", "#2e5a32", vf);
+      // Conifer triangle (pointy)
+      ctx.fillStyle = lerpColor(baseGreen, lightGreen, shadeT);
+      ctx.beginPath();
+      ctx.moveTo(px, py - sz);
+      ctx.lineTo(px - sz * 0.7, py + sz * 0.7);
+      ctx.lineTo(px + sz * 0.7, py + sz * 0.7);
+      ctx.closePath();
+      ctx.fill();
+      // Highlight on one side
+      ctx.fillStyle = `rgba(120, 180, 110, ${0.15 * vf})`;
+      ctx.beginPath();
+      ctx.moveTo(px - 0.5, py - sz + 1);
+      ctx.lineTo(px - sz * 0.5, py + sz * 0.5);
+      ctx.lineTo(px - 1, py + sz * 0.6);
+      ctx.closePath();
+      ctx.fill();
+      // Tiny shadow at base
+      ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+      ctx.beginPath();
+      ctx.ellipse(px, py + sz * 0.85, sz * 0.6, 0.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   // ─── Perlin noise terrain texture (FULL canvas, visible) ──────────────
   // Meadow noise — creates patches of lighter/darker grass, dirt
@@ -888,66 +946,95 @@ function renderEcosystem(ctx, eco) {
   }
   ctx.globalAlpha = 1;
 
-  // ─── Mountain range (far right background strip) ──────────────────────
-  // Mountain base — dark rocky ground
-  const mtGrad = ctx.createLinearGradient(MX, 0, W, 0);
-  mtGrad.addColorStop(0, "#2a3a2e");
-  mtGrad.addColorStop(0.3, "#3a4a48");
-  mtGrad.addColorStop(0.7, "#4a5a58");
-  mtGrad.addColorStop(1, "#3a4a48");
-  ctx.fillStyle = mtGrad;
+  // ─── Mountain range (far right background — 3 parallax layers) ────────
+  // Warm earthy grays — the Absaroka/Gallatin ranges as seen from the valley
+  const mtBgGrad = ctx.createLinearGradient(MX, 0, W, 0);
+  mtBgGrad.addColorStop(0, "#5a4a3a");      // warm earth-tan near forest edge
+  mtBgGrad.addColorStop(0.4, "#7a6a58");    // mid-distance brown-gray
+  mtBgGrad.addColorStop(1, "#9a8a78");      // furthest haze
+  ctx.fillStyle = mtBgGrad;
   ctx.fillRect(MX, 0, W - MX, H);
 
-  // Mountain ridge silhouettes (multiple overlapping ranges for depth)
-  // Far range
-  ctx.fillStyle = "#5a6a68";
+  // FAR range — palest, smallest, most distant
+  const farRange = (yPct) => MX + (W - MX) * 0.55 + Math.sin(yPct * 6.2 + 0.3) * (W - MX) * 0.08 + Math.sin(yPct * 18 + 1) * (W - MX) * 0.025;
+  ctx.fillStyle = lerpColor("#8a8478", "#a09a8a", todWarmth);
   ctx.beginPath();
   ctx.moveTo(MX, 0);
-  for (let y = 0; y <= H; y += 3) {
-    const pct = y / H;
-    const ridge = MX + (W - MX) * 0.3 + Math.sin(pct * 7 + 1.2) * (W - MX) * 0.15 + Math.sin(pct * 15) * (W - MX) * 0.05;
-    ctx.lineTo(ridge, y);
-  }
+  for (let y = 0; y <= H; y += 3) ctx.lineTo(farRange(y / H), y);
   ctx.lineTo(MX, H);
   ctx.closePath();
   ctx.fill();
-
-  // Snow caps on ridges
-  ctx.fillStyle = "rgba(220, 230, 240, 0.3)";
+  // Snow caps on far range — bright against warm rock
+  ctx.fillStyle = "rgba(248, 252, 255, 0.85)";
   ctx.beginPath();
-  ctx.moveTo(MX, 0);
-  for (let y = 0; y <= H; y += 3) {
-    const pct = y / H;
-    const ridge = MX + (W - MX) * 0.3 + Math.sin(pct * 7 + 1.2) * (W - MX) * 0.15 + Math.sin(pct * 15) * (W - MX) * 0.05;
-    ctx.lineTo(ridge, y);
+  for (let y = 0; y <= H; y += 4) {
+    const r = farRange(y / H);
+    const snowDepth = (W - MX) * 0.06 * (0.6 + Math.sin(y * 0.04) * 0.4);
+    if (y === 0) ctx.moveTo(r, y); else ctx.lineTo(r, y);
+    ctx.lineTo(r + snowDepth, y);
   }
-  for (let y = H; y >= 0; y -= 3) {
-    const pct = y / H;
-    const ridge = MX + (W - MX) * 0.3 + Math.sin(pct * 7 + 1.2) * (W - MX) * 0.15 + Math.sin(pct * 15) * (W - MX) * 0.05;
-    ctx.lineTo(ridge + (W - MX) * 0.08, y);
-  }
+  for (let y = H; y >= 0; y -= 6) ctx.lineTo(farRange(y / H), y);
   ctx.closePath();
   ctx.fill();
 
-  // Near range (darker)
-  ctx.fillStyle = "#3a4a42";
+  // MID range — mid-tone, medium silhouette
+  const midRange = (yPct) => MX + (W - MX) * 0.35 + Math.sin(yPct * 5.4 + 0.8) * (W - MX) * 0.11 + Math.sin(yPct * 13 + 2.2) * (W - MX) * 0.04;
+  ctx.fillStyle = lerpColor("#5e5246", "#6e6256", todWarmth);
   ctx.beginPath();
   ctx.moveTo(MX, 0);
-  for (let y = 0; y <= H; y += 3) {
-    const pct = y / H;
-    const ridge = MX + (W - MX) * 0.15 + Math.sin(pct * 5 + 0.5) * (W - MX) * 0.1 + Math.sin(pct * 12 + 2) * (W - MX) * 0.04;
-    ctx.lineTo(ridge, y);
-  }
+  for (let y = 0; y <= H; y += 3) ctx.lineTo(midRange(y / H), y);
   ctx.lineTo(MX, H);
   ctx.closePath();
   ctx.fill();
+  // Snow on mid range — patchier but bright
+  ctx.fillStyle = "rgba(240, 246, 250, 0.78)";
+  ctx.beginPath();
+  for (let y = 0; y <= H; y += 5) {
+    const r = midRange(y / H);
+    const sd = (W - MX) * 0.05 * (0.5 + Math.sin(y * 0.05 + 1.4) * 0.5);
+    if (y === 0) ctx.moveTo(r, y); else ctx.lineTo(r, y);
+    ctx.lineTo(r + sd, y);
+  }
+  for (let y = H; y >= 0; y -= 6) ctx.lineTo(midRange(y / H), y);
+  ctx.closePath();
+  ctx.fill();
 
-  // Mountain-to-forest transition (soft gradient)
-  const mtTransGrad = ctx.createLinearGradient(MX - 30, 0, MX + 20, 0);
+  // NEAR range — darkest, sharpest peaks, casts toward viewer
+  const nearRange = (yPct) => MX + (W - MX) * 0.12 + Math.sin(yPct * 4.6 + 1.7) * (W - MX) * 0.09 + Math.sin(yPct * 11 + 3.1) * (W - MX) * 0.035;
+  ctx.fillStyle = lerpColor("#3a2e22", "#48382a", todWarmth);
+  ctx.beginPath();
+  ctx.moveTo(MX, 0);
+  for (let y = 0; y <= H; y += 3) ctx.lineTo(nearRange(y / H), y);
+  ctx.lineTo(MX, H);
+  ctx.closePath();
+  ctx.fill();
+  // Sparse snow on near peaks (only at peak points where slope is steep)
+  ctx.fillStyle = "rgba(230, 240, 245, 0.7)";
+  for (let i = 0; i < 8; i++) {
+    const py = (i + 0.5) * (H / 8);
+    const px = nearRange(py / H);
+    ctx.beginPath();
+    ctx.ellipse(px + 4, py, 4, 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Rock texture detail on near range — small dark patches
+  ctx.fillStyle = "rgba(20, 28, 35, 0.35)";
+  for (let i = 0; i < 30; i++) {
+    const py = (i * 87.13) % H;
+    const px = nearRange(py / H) + 6 + ((i * 13.7) % 18);
+    if (px > W - 4) continue;
+    ctx.beginPath();
+    ctx.ellipse(px, py, 1.5 + (i % 3), 1, i * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Mountain-to-forest soft transition
+  const mtTransGrad = ctx.createLinearGradient(MX - 35, 0, MX + 25, 0);
   mtTransGrad.addColorStop(0, "transparent");
-  mtTransGrad.addColorStop(1, "rgba(42, 58, 46, 0.6)");
+  mtTransGrad.addColorStop(1, "rgba(35, 50, 42, 0.55)");
   ctx.fillStyle = mtTransGrad;
-  ctx.fillRect(MX - 30, 0, 50, H);
+  ctx.fillRect(MX - 35, 0, 60, H);
 
   // ─── Wildflowers scattered across meadow ──────────────────────────────
   if (vf > 0.2) {
@@ -1004,42 +1091,63 @@ function renderEcosystem(ctx, eco) {
   ctx.fillStyle = rightBankGrad;
   ctx.fillRect(RX + scaledRW / 2, 0, bankW, H);
 
-  // River water — gradient across width
-  const waterDeep = rh > 60 ? "#1a5fb8" : rh > 30 ? "#2a6ab8" : "#6a5030";
-  const waterLight = rh > 60 ? "#3a8ae8" : rh > 30 ? "#4a90d0" : "#8a7050";
+  // River water — natural-looking gradient (darker, more depth)
+  // Real Yellowstone river: deep teal-blue with darker shadow channels along banks
+  const waterDeep   = rh > 60 ? "#0d3a5c" : rh > 30 ? "#1a4a60" : "#5a4030";  // deep channel
+  const waterMid    = rh > 60 ? "#1e5680" : rh > 30 ? "#2c5d75" : "#6e5040";  // mid depth
+  const waterShallow = rh > 60 ? "#3a7ea0" : rh > 30 ? "#4a7e95" : "#8e6850"; // sunlit shallows
   const riverGrad = ctx.createLinearGradient(RX - scaledRW / 2, 0, RX + scaledRW / 2, 0);
-  riverGrad.addColorStop(0, lerpColor(waterDeep, "#2a3a2a", 0.3));
-  riverGrad.addColorStop(0.2, waterDeep);
-  riverGrad.addColorStop(0.5, waterLight);
-  riverGrad.addColorStop(0.8, waterDeep);
-  riverGrad.addColorStop(1, lerpColor(waterDeep, "#2a3a2a", 0.3));
+  riverGrad.addColorStop(0, "#1a2a1a");           // muddy bank shadow
+  riverGrad.addColorStop(0.08, waterDeep);
+  riverGrad.addColorStop(0.35, waterMid);
+  riverGrad.addColorStop(0.5, waterShallow);
+  riverGrad.addColorStop(0.65, waterMid);
+  riverGrad.addColorStop(0.92, waterDeep);
+  riverGrad.addColorStop(1, "#1a2a1a");
   ctx.fillStyle = riverGrad;
   ctx.fillRect(RX - scaledRW / 2, 0, scaledRW, H);
 
-  // River current — flowing lines
-  for (let layer = 0; layer < 4; layer++) {
-    ctx.strokeStyle = `rgba(140, 200, 255, ${0.06 + rh * 0.002 + layer * 0.01})`;
-    ctx.lineWidth = 0.6 + layer * 0.2;
-    for (let y = -20; y < H + 20; y += 10 + layer * 4) {
+  // River current — subtle wavy lines (less chaotic, more flowing)
+  for (let layer = 0; layer < 3; layer++) {
+    ctx.strokeStyle = `rgba(170, 220, 255, ${0.05 + rh * 0.0015 + layer * 0.008})`;
+    ctx.lineWidth = 0.8 + layer * 0.3;
+    for (let y = -20; y < H + 20; y += 18 + layer * 6) {
       ctx.beginPath();
-      const phase = tick * (0.025 + layer * 0.008) + y * 0.05 + layer * 1.2;
-      const amp = scaledRW * 0.12 * (1 - layer * 0.15);
-      for (let dy = 0; dy < 8; dy += 1.5) {
-        const cx = RX + Math.sin(phase + dy * 0.4) * amp;
-        ctx.lineTo(cx, y + dy);
+      const phase = tick * (0.018 + layer * 0.005) + y * 0.025 + layer * 1.2;
+      const amp = scaledRW * 0.10 * (1 - layer * 0.18);
+      // Smoother wave with fewer points
+      for (let dy = 0; dy < 14; dy += 3.5) {
+        const cx = RX + Math.sin(phase + dy * 0.3) * amp;
+        if (dy === 0) ctx.moveTo(cx, y + dy);
+        else ctx.lineTo(cx, y + dy);
       }
       ctx.stroke();
     }
   }
 
-  // Shimmer highlights on water
-  ctx.fillStyle = `rgba(255, 255, 255, ${0.04 + rh * 0.002})`;
-  for (let i = 0; i < 15; i++) {
-    const sx = RX + Math.sin(tick * 0.02 + i * 3.7) * scaledRW * 0.3;
-    const sy = (tick * 0.5 + i * H / 15) % H;
+  // Caustic light highlights — bright moving spots on water surface
+  for (let i = 0; i < 24; i++) {
+    const causticPhase = tick * 0.018 + i * 1.7;
+    const sx = RX + Math.sin(causticPhase) * scaledRW * 0.32;
+    const sy = ((tick * 0.6 + i * H / 24) % (H + 30)) - 15;
+    const intensity = (Math.sin(causticPhase * 1.7) * 0.5 + 0.5);
+    ctx.fillStyle = `rgba(220, 240, 255, ${(0.10 + rh * 0.002) * intensity})`;
     ctx.beginPath();
-    ctx.ellipse(sx, sy, 2, 0.8, tick * 0.01 + i, 0, Math.PI * 2);
+    ctx.ellipse(sx, sy, 3 + intensity * 2, 1 + intensity * 0.5, tick * 0.01 + i, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // Surface shimmer flecks (sparkle)
+  ctx.fillStyle = `rgba(255, 255, 255, ${0.08 + rh * 0.002})`;
+  for (let i = 0; i < 18; i++) {
+    const sx = RX + Math.sin(tick * 0.025 + i * 2.3) * scaledRW * 0.35;
+    const sy = (tick * 0.45 + i * H / 18) % H;
+    const sparkle = (Math.sin(tick * 0.08 + i) * 0.5 + 0.5);
+    if (sparkle > 0.7) {
+      ctx.beginPath();
+      ctx.arc(sx, sy, 0.8 + sparkle * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // River stones along banks
@@ -1087,11 +1195,15 @@ function renderEcosystem(ctx, eco) {
     ctx.globalAlpha = 1;
   }
 
-  // ─── Ambient light overlay (warm upper-left, cool lower-right) ────────
+  // ─── Time-of-day ambient warmth — diagonal sun overlay ────────────────
+  // Warmth goes 0 (cool dawn) → 1 (warm noon) → 0 (cool dusk) cyclically.
+  const sunR = Math.round(255 * (0.6 + todWarmth * 0.4));
+  const sunG = Math.round(220 * (0.5 + todWarmth * 0.5));
+  const sunB = Math.round(140 + (1 - todWarmth) * 80);
   const ambGrad = ctx.createLinearGradient(0, 0, W, H);
-  ambGrad.addColorStop(0, `rgba(255, 220, 150, ${0.04 * vf})`);
+  ambGrad.addColorStop(0, `rgba(${sunR}, ${sunG}, ${sunB}, ${0.05 + todWarmth * 0.05})`);
   ambGrad.addColorStop(0.5, "transparent");
-  ambGrad.addColorStop(1, `rgba(100, 120, 180, ${0.04 * vf})`);
+  ambGrad.addColorStop(1, `rgba(80, 100, 160, ${0.04 + (1 - todWarmth) * 0.05})`);
   ctx.fillStyle = ambGrad;
   ctx.fillRect(0, 0, W, H);
 
@@ -1172,82 +1284,81 @@ function renderEcosystem(ctx, eco) {
     ctx.globalAlpha = 1;
   }
 
-  // ─── Birth / Growth / Kill particle effects ───────────────────────────
+  // ─── Birth / Growth / Kill particle effects (canvas-drawn, no emoji) ──
   for (const p of eco.particles) {
-    const t = p.age / p.maxAge; // 0 → 1 over lifetime
-    const fade = t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8; // fade in then out
+    const t = p.age / p.maxAge;                   // 0 → 1 over lifetime
+    const fade = t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8; // ease in/out
+    if (fade <= 0) continue;
 
     if (p.type === "birth") {
-      // Expanding ring + rising text
-      ctx.strokeStyle = p.color;
-      ctx.lineWidth = 1.5;
-      ctx.globalAlpha = fade * 0.7;
-      const radius = 4 + p.age * 0.25;
+      // Expanding glow ring + 4 small rising motes (no text labels)
+      const radius = 4 + p.age * 0.32;
+      // Soft outer glow
+      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius * 1.6);
+      glow.addColorStop(0, hexA(p.color, fade * 0.45));
+      glow.addColorStop(1, hexA(p.color, 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius * 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      // Crisp ring
+      ctx.strokeStyle = hexA(p.color, fade * 0.85);
+      ctx.lineWidth = 1.4;
       ctx.beginPath();
       ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
       ctx.stroke();
-      // Inner sparkles
+      // 4 motes rising upward & outward
+      ctx.fillStyle = hexA(p.color, fade * 0.7);
       for (let s = 0; s < 4; s++) {
-        const angle = (s / 4) * Math.PI * 2 + p.age * 0.05;
-        const sr = radius * 0.6;
+        const angle = (s / 4) * Math.PI * 2 + p.age * 0.04;
+        const sr = radius * 0.7 + p.age * 0.1;
         const sx = p.x + Math.cos(angle) * sr;
-        const sy = p.y + Math.sin(angle) * sr;
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = fade * 0.5;
+        const sy = p.y + Math.sin(angle) * sr - p.age * 0.15;
         ctx.beginPath();
-        ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+        ctx.arc(sx, sy, 1.4 * fade, 0, Math.PI * 2);
         ctx.fill();
-      }
-      // Rising label
-      if (p.age < 50) {
-        ctx.globalAlpha = fade * 0.9;
-        ctx.fillStyle = p.color;
-        ctx.font = "bold 10px sans-serif";
-        ctx.fillText("+" + p.icon, p.x + 8, p.y - 6 - p.age * 0.2);
       }
     } else if (p.type === "growth") {
-      // Green sprouting effect — expanding rings with leaf symbol
-      ctx.globalAlpha = fade * 0.6;
-      ctx.strokeStyle = "#22c55e";
+      // Sprouting: small leaf shape + curling tendril rising from p.x,p.y
+      const rise = p.age * 0.18;
+      const sway = Math.sin(p.age * 0.12) * 3;
+      // Tendril stem
+      ctx.strokeStyle = hexA("#22c55e", fade * 0.85);
       ctx.lineWidth = 1.2;
-      const gr = 3 + p.age * 0.15;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, gr, 0, Math.PI * 2);
+      ctx.moveTo(p.x, p.y);
+      ctx.quadraticCurveTo(p.x + sway * 0.5, p.y - rise * 0.5, p.x + sway, p.y - rise);
       ctx.stroke();
-      // Small green dots rising like growth
-      for (let s = 0; s < 3; s++) {
-        const gy = p.y - p.age * 0.12 - s * 5;
-        const gx = p.x + Math.sin(p.age * 0.1 + s * 2) * 4;
-        ctx.fillStyle = "#4ade80";
-        ctx.globalAlpha = fade * 0.4;
-        ctx.beginPath();
-        ctx.arc(gx, gy, 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      if (p.age < 60) {
-        ctx.globalAlpha = fade * 0.8;
-        ctx.fillStyle = "#22c55e";
-        ctx.font = "9px sans-serif";
-        ctx.fillText("🌱", p.x - 5, p.y - 8 - p.age * 0.15);
-      }
+      // Leaf at tip — pointed ellipse
+      ctx.fillStyle = hexA("#4ade80", fade * 0.85);
+      ctx.beginPath();
+      ctx.ellipse(p.x + sway, p.y - rise - 1, 3, 1.5, Math.sin(p.age * 0.08) * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      // Highlight on leaf
+      ctx.fillStyle = hexA("#86efac", fade * 0.6);
+      ctx.beginPath();
+      ctx.ellipse(p.x + sway - 0.5, p.y - rise - 1.5, 1.2, 0.6, Math.sin(p.age * 0.08) * 0.4, 0, Math.PI * 2);
+      ctx.fill();
     } else if (p.type === "kill") {
-      // Red burst effect
-      ctx.globalAlpha = fade * 0.8;
-      ctx.fillStyle = "#ef4444";
-      const kr = 2 + p.age * 0.3;
+      // Red burst: dust puff + 6 expanding sparks, no skull text
+      const kr = 2 + p.age * 0.35;
+      // Dust cloud
+      const dust = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, kr * 2.2);
+      dust.addColorStop(0, `rgba(220, 110, 90, ${fade * 0.55})`);
+      dust.addColorStop(1, "rgba(220, 110, 90, 0)");
+      ctx.fillStyle = dust;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, kr * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      // Sparks
+      ctx.fillStyle = `rgba(239, 68, 68, ${fade * 0.85})`;
       for (let s = 0; s < 6; s++) {
-        const angle = (s / 6) * Math.PI * 2 + p.age * 0.03;
+        const angle = (s / 6) * Math.PI * 2 + p.age * 0.04;
         const sx = p.x + Math.cos(angle) * kr;
         const sy = p.y + Math.sin(angle) * kr;
         ctx.beginPath();
-        ctx.arc(sx, sy, 2 * (1 - t), 0, Math.PI * 2);
+        ctx.arc(sx, sy, 1.8 * (1 - t), 0, Math.PI * 2);
         ctx.fill();
-      }
-      if (p.age < 40) {
-        ctx.globalAlpha = fade * 0.9;
-        ctx.fillStyle = "#fca5a5";
-        ctx.font = "bold 10px sans-serif";
-        ctx.fillText("💀", p.x + 6, p.y - 4 - p.age * 0.15);
       }
     }
     ctx.globalAlpha = 1;
@@ -1273,12 +1384,32 @@ function renderEcosystem(ctx, eco) {
     ctx.globalAlpha = 1;
   }
 
-  // ─── Vignette (darken edges/corners) ──────────────────────────────────
-  const vigGrad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+  // ─── Vignette (darken edges/corners — stronger for atmospheric depth) ─
+  const vigGrad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.30, W / 2, H / 2, Math.max(W, H) * 0.78);
   vigGrad.addColorStop(0, "transparent");
-  vigGrad.addColorStop(1, "rgba(10, 15, 20, 0.3)");
+  vigGrad.addColorStop(0.7, "rgba(10, 15, 20, 0.18)");
+  vigGrad.addColorStop(1, "rgba(5, 10, 18, 0.42)");
   ctx.fillStyle = vigGrad;
   ctx.fillRect(0, 0, W, H);
+
+  // ─── Edge fog (top + bottom haze for cinematic depth) ─────────────────
+  const topFog = ctx.createLinearGradient(0, 0, 0, H * 0.12);
+  topFog.addColorStop(0, "rgba(190, 205, 215, 0.20)");
+  topFog.addColorStop(1, "rgba(190, 205, 215, 0)");
+  ctx.fillStyle = topFog;
+  ctx.fillRect(0, 0, W, H * 0.12);
+
+  const botFog = ctx.createLinearGradient(0, H * 0.92, 0, H);
+  botFog.addColorStop(0, "rgba(20, 30, 40, 0)");
+  botFog.addColorStop(1, "rgba(20, 30, 40, 0.18)");
+  ctx.fillStyle = botFog;
+  ctx.fillRect(0, H * 0.92, W, H * 0.08);
+
+  // ─── Per-scenario palette tint (mood overlay) ─────────────────────────
+  if (scenarioOverlay) {
+    ctx.fillStyle = scenarioOverlay;
+    ctx.fillRect(0, 0, W, H);
+  }
 
   // ─── Atmospheric haze when ecosystem is degraded ──────────────────────
   if (vh < 40) {
@@ -1801,131 +1932,171 @@ function drawCoyote(ctx, e, tick) {
 }
 
 function drawFish(ctx, e, tick) {
-  const phase = Math.sin(tick * 0.05 + e.id.charCodeAt(0)) * 2;
-  ctx.globalAlpha = 0.8;
+  const phase = Math.sin(tick * 0.06 + e.id.charCodeAt(0)) * 2.5;
+  // Cutthroat trout palette — visible against blue water
+  // Deep olive back, silver-pink belly, distinct red gill stripe
+  ctx.save();
 
-  // Body with gradient
-  const fg = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, 6);
-  fg.addColorStop(0, "#a5f3fc");
-  fg.addColorStop(1, "#0891b2");
-  ctx.fillStyle = fg;
+  // Body — darker olive top half (visible against cyan river)
+  const bodyGrad = ctx.createLinearGradient(e.x, e.y - 3, e.x, e.y + 3);
+  bodyGrad.addColorStop(0, "#3a5a44");      // dark olive top
+  bodyGrad.addColorStop(0.45, "#5c8050");   // mid olive
+  bodyGrad.addColorStop(0.55, "#c8b890");   // pale belly line
+  bodyGrad.addColorStop(1, "#e6dec5");      // cream belly
+  ctx.fillStyle = bodyGrad;
   ctx.beginPath();
-  ctx.ellipse(e.x, e.y, 6, 3, phase * 0.08, 0, Math.PI * 2);
+  ctx.ellipse(e.x, e.y, 7, 3, phase * 0.08, 0, Math.PI * 2);
   ctx.fill();
 
-  // Scales effect (tiny lines)
-  ctx.strokeStyle = "rgba(255,255,255,0.3)";
-  ctx.lineWidth = 0.4;
-  for (let i = 0; i < 3; i++) {
-    ctx.beginPath();
-    ctx.moveTo(e.x - 2 + i * 1.5, e.y - 1);
-    ctx.lineTo(e.x - 2 + i * 1.5, e.y + 1);
-    ctx.stroke();
-  }
-
-  // Tail fin with detail
-  ctx.fillStyle = "#67e8f9";
+  // Red cutthroat slash under jaw (signature mark)
+  ctx.strokeStyle = "rgba(220, 80, 70, 0.8)";
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(e.x - 6, e.y);
-  ctx.lineTo(e.x - 9.5, e.y - 3.5);
-  ctx.lineTo(e.x - 9.5, e.y + 3.5);
-  ctx.closePath();
-  ctx.fill();
-
-  // Tail fin lines
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
-  ctx.lineWidth = 0.5;
-  ctx.beginPath();
-  ctx.moveTo(e.x - 6, e.y);
-  ctx.lineTo(e.x - 9.5, e.y - 3.5);
-  ctx.moveTo(e.x - 6, e.y);
-  ctx.lineTo(e.x - 9.5, e.y + 3.5);
+  ctx.moveTo(e.x + 2, e.y + 1);
+  ctx.lineTo(e.x + 4.5, e.y + 1.4);
   ctx.stroke();
 
-  // Dorsal fin
-  ctx.fillStyle = "rgba(167, 243, 252, 0.6)";
-  ctx.beginPath();
-  ctx.moveTo(e.x - 1, e.y - 3);
-  ctx.lineTo(e.x + 1, e.y - 3.5);
-  ctx.lineTo(e.x + 1.5, e.y - 2.5);
-  ctx.closePath();
-  ctx.fill();
-
-  // Eye
-  ctx.fillStyle = "#1c1917";
-  ctx.beginPath();
-  ctx.arc(e.x + 3, e.y - 0.8, 0.8, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Bubble trail
-  if (tick % 5 === 0) {
-    ctx.fillStyle = "rgba(167, 243, 252, 0.3)";
+  // Dark spots along back (trout pattern)
+  ctx.fillStyle = "rgba(20, 30, 20, 0.7)";
+  for (let i = -2; i <= 2; i++) {
     ctx.beginPath();
-    ctx.arc(e.x - 8, e.y + Math.sin(tick * 0.1) * 2, 0.8, 0, Math.PI * 2);
+    ctx.arc(e.x + i * 1.5, e.y - 1.2, 0.5, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  ctx.globalAlpha = 1;
+  // Tail — forked
+  ctx.fillStyle = "#3a5a44";
+  ctx.beginPath();
+  ctx.moveTo(e.x - 7, e.y);
+  ctx.lineTo(e.x - 10.5, e.y - 3.8);
+  ctx.lineTo(e.x - 9, e.y);
+  ctx.lineTo(e.x - 10.5, e.y + 3.8);
+  ctx.closePath();
+  ctx.fill();
+
+  // Dorsal fin — top
+  ctx.fillStyle = "#4a6a52";
+  ctx.beginPath();
+  ctx.moveTo(e.x - 1, e.y - 3);
+  ctx.lineTo(e.x + 2, e.y - 4.2);
+  ctx.lineTo(e.x + 3, e.y - 2.8);
+  ctx.closePath();
+  ctx.fill();
+
+  // Pectoral fin (small)
+  ctx.fillStyle = "rgba(70, 100, 80, 0.7)";
+  ctx.beginPath();
+  ctx.ellipse(e.x + 1, e.y + 2, 1.5, 0.7, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eye — bright
+  ctx.fillStyle = "#fef3c7";
+  ctx.beginPath();
+  ctx.arc(e.x + 4, e.y - 0.7, 0.9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1c1917";
+  ctx.beginPath();
+  ctx.arc(e.x + 4.2, e.y - 0.7, 0.55, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Subtle ripple trail
+  if (tick % 8 === 0) {
+    ctx.strokeStyle = "rgba(200, 230, 255, 0.4)";
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.arc(e.x - 12, e.y, 2.5, -0.4, 0.4);
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }
 
 function drawBird(ctx, e) {
-  const wing = Math.sin(e.flutterPhase) * 6;
+  const wing = Math.sin(e.flutterPhase) * 7;
   const bob = Math.sin(e.flutterPhase * 0.7) * 2;
+  // Mountain bluebird palette — vivid blue back, rust breast, white belly
+  // Real Yellowstone songbird, much more visible than yellow-on-green
+  ctx.save();
 
   // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.12)";
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
   ctx.beginPath();
-  ctx.ellipse(e.x, e.y + 9, 4, 1.2, 0, 0, Math.PI * 2);
+  ctx.ellipse(e.x, e.y + 9, 5, 1.4, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Body
-  ctx.fillStyle = "#fcd34d";
+  // Body — rust breast, blue back
+  const bodyGrad = ctx.createLinearGradient(e.x, e.y - 3 + bob, e.x, e.y + 3 + bob);
+  bodyGrad.addColorStop(0, "#2563eb");      // bright blue back
+  bodyGrad.addColorStop(0.5, "#3b82f6");
+  bodyGrad.addColorStop(0.55, "#c2410c");   // rust breast line
+  bodyGrad.addColorStop(1, "#fef3c7");      // pale belly
+  ctx.fillStyle = bodyGrad;
   ctx.beginPath();
-  ctx.ellipse(e.x, e.y + bob, 4, 3, 0, 0, Math.PI * 2);
+  ctx.ellipse(e.x, e.y + bob, 4.5, 3.2, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Head
-  ctx.fillStyle = "#f59e0b";
+  // Head — bright blue
+  ctx.fillStyle = "#1d4ed8";
   ctx.beginPath();
-  ctx.arc(e.x + 3, e.y - 1.5 + bob, 2.3, 0, Math.PI * 2);
+  ctx.arc(e.x + 3, e.y - 1.5 + bob, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  // Crown highlight
+  ctx.fillStyle = "rgba(96, 165, 250, 0.7)";
+  ctx.beginPath();
+  ctx.arc(e.x + 2.5, e.y - 2.5 + bob, 1.2, 0, Math.PI * 2);
   ctx.fill();
 
-  // Beak
-  ctx.fillStyle = "#b45309";
+  // Beak — sharp dark triangle
+  ctx.fillStyle = "#1c1917";
   ctx.beginPath();
   ctx.moveTo(e.x + 5, e.y - 1.5 + bob);
-  ctx.lineTo(e.x + 7.5, e.y - 0.8 + bob);
-  ctx.lineTo(e.x + 5, e.y - 0.3 + bob);
+  ctx.lineTo(e.x + 7.5, e.y - 1.2 + bob);
+  ctx.lineTo(e.x + 5, e.y - 0.5 + bob);
+  ctx.closePath();
   ctx.fill();
 
-  // Wings with curved motion
-  ctx.strokeStyle = "#f59e0b";
-  ctx.lineWidth = 2;
+  // Wings — bright blue with curved motion + secondary feather detail
+  ctx.strokeStyle = "#1e40af";
+  ctx.lineWidth = 2.4;
   ctx.lineCap = "round";
   ctx.beginPath();
   ctx.moveTo(e.x - 2, e.y + bob);
-  ctx.quadraticCurveTo(e.x - 6, e.y - wing + bob, e.x - 8, e.y - wing * 0.6 + bob);
+  ctx.quadraticCurveTo(e.x - 7, e.y - wing + bob, e.x - 9.5, e.y - wing * 0.6 + bob);
   ctx.moveTo(e.x + 1, e.y + bob);
-  ctx.quadraticCurveTo(e.x + 5, e.y - wing + bob, e.x + 6.5, e.y - wing * 0.6 + bob);
+  ctx.quadraticCurveTo(e.x + 5, e.y - wing + bob, e.x + 7.5, e.y - wing * 0.6 + bob);
   ctx.stroke();
 
-  // Tail feathers
-  ctx.strokeStyle = "#f97316";
+  // Wing tip lighter highlight
+  ctx.strokeStyle = "rgba(147, 197, 253, 0.8)";
   ctx.lineWidth = 1.2;
   ctx.beginPath();
+  ctx.moveTo(e.x - 5, e.y - wing * 0.7 + bob);
+  ctx.lineTo(e.x - 9, e.y - wing * 0.6 + bob);
+  ctx.moveTo(e.x + 4, e.y - wing * 0.7 + bob);
+  ctx.lineTo(e.x + 7, e.y - wing * 0.6 + bob);
+  ctx.stroke();
+
+  // Tail feathers — split V
+  ctx.strokeStyle = "#1e40af";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
   ctx.moveTo(e.x - 3, e.y + 1 + bob);
-  ctx.lineTo(e.x - 4.5, e.y + 3 + bob);
+  ctx.lineTo(e.x - 5.5, e.y + 3.5 + bob);
+  ctx.moveTo(e.x - 3, e.y + 1 + bob);
+  ctx.lineTo(e.x - 5, e.y + 4.5 + bob);
   ctx.stroke();
 
   // Eye
-  ctx.fillStyle = "#1c1917";
-  ctx.beginPath();
-  ctx.arc(e.x + 3.5, e.y - 2.2 + bob, 0.6, 0, Math.PI * 2);
-  ctx.fill();
   ctx.fillStyle = "#fef3c7";
   ctx.beginPath();
-  ctx.arc(e.x + 3.8, e.y - 2.4 + bob, 0.25, 0, Math.PI * 2);
+  ctx.arc(e.x + 3.4, e.y - 2.1 + bob, 0.7, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillStyle = "#1c1917";
+  ctx.beginPath();
+  ctx.arc(e.x + 3.6, e.y - 2.2 + bob, 0.45, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
 }
 
 function drawRabbit(ctx, e, tick) {
