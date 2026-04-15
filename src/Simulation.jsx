@@ -303,6 +303,21 @@ function updateWolf(w, eco) {
   }
   w.state = "wander";
   wander(w, eco.W, eco.H);
+
+  // Howl behavior — when pack is nearby, occasionally trigger howl pose
+  if (w.howling) {
+    w.howling--;
+    if (w.howling <= 0) w.howling = 0;
+  } else if (Math.random() < 0.002) {
+    // Check pack presence — at least 2 other wolves within 80px
+    let packNearby = 0;
+    for (const o of eco.entities) {
+      if (o.type === WOLF && o.alive && o.id !== w.id && dist(w, o) < 80) packNearby++;
+      if (packNearby >= 2) break;
+    }
+    if (packNearby >= 2) w.howling = 180; // howl for ~3 seconds at 60fps
+  }
+
   // Dynamic reproduction: more wolves = more breeding, but density-limited
   if (w.energy > 100 && Math.random() < 0.003) {
     const cnt = eco.entities.filter(e => e.type === WOLF && e.alive).length;
@@ -384,10 +399,18 @@ function updateTree(tree, eco) {
 function updateBeaver(b, eco) {
   b.energy -= 0.05;
   const RX = eco.W * TERRAIN.riverPct;
+  const nearRiver = Math.abs(b.x - RX) < 40;
   if (Math.abs(b.x - RX) > 60) moveToward(b, RX + rand(-25, 25), b.y + rand(-30, 30), b.speed);
   else wander(b, eco.W, eco.H);
   const tree = findNearest(b, eco.entities, TREE, 90);
   if (tree && tree.growth > 0.5) eco.riverHealth = clamp(eco.riverHealth + 0.006, 0, 100);
+
+  // Tail-slap animation timer — fires occasionally when beaver is by the river
+  if (b.tailSlap && b.tailSlap > 0) {
+    b.tailSlap--;
+  } else if (nearRiver && Math.random() < 0.003) {
+    b.tailSlap = 30; // 0.5 second slap animation
+  }
   // Dynamic reproduction: beavers breed when willows available, more beavers = more breeding (colony effect)
   if (b.energy > 60 && Math.random() < 0.0025) {
     const tc = eco.entities.filter(e => e.type === TREE && e.alive && e.growth > 0.4).length;
@@ -1001,7 +1024,7 @@ function renderEcosystem(ctx, eco) {
 
   // NEAR range — darkest, sharpest peaks, casts toward viewer
   const nearRange = (yPct) => MX + (W - MX) * 0.12 + Math.sin(yPct * 4.6 + 1.7) * (W - MX) * 0.09 + Math.sin(yPct * 11 + 3.1) * (W - MX) * 0.035;
-  ctx.fillStyle = lerpColor("#3a2e22", "#48382a", todWarmth);
+  ctx.fillStyle = lerpColor("#4d3f32", "#5c4c3c", todWarmth);
   ctx.beginPath();
   ctx.moveTo(MX, 0);
   for (let y = 0; y <= H; y += 3) ctx.lineTo(nearRange(y / H), y);
@@ -1036,28 +1059,46 @@ function renderEcosystem(ctx, eco) {
   ctx.fillStyle = mtTransGrad;
   ctx.fillRect(MX - 35, 0, 60, H);
 
-  // ─── Wildflowers scattered across meadow ──────────────────────────────
-  if (vf > 0.2) {
-    const flowerColors = ["#e87474", "#eab038", "#78d878", "#d8a0e0", "#f0d060"];
-    for (let i = 0; i < Math.floor(100 * vf); i++) {
+  // ─── Wildflowers scattered across meadow (Yellowstone species) ─────────
+  // Bigger clusters, more variety, more visible — real Yellowstone flowers:
+  // Indian paintbrush (red), balsamroot (yellow), lupine (purple), fireweed (magenta)
+  if (vf > 0.15) {
+    const flowerColors = ["#dc2626", "#facc15", "#8b5cf6", "#ec4899", "#f97316", "#f8fafc"];
+    for (let i = 0; i < Math.floor(180 * vf); i++) {
       const fx = (i * 191.23 + 13) % (RX - scaledRW / 2 - 20) + 10;
       const fy = (i * 137.891 + 7) % (H - 20) + 10;
       const nv = noise2d(fx, fy, 80);
-      if (nv < 0.4) continue;  // only in certain patches
-      ctx.fillStyle = flowerColors[i % flowerColors.length];
-      ctx.globalAlpha = vf * 0.6;
+      if (nv < 0.35) continue;
+      const clr = flowerColors[i % flowerColors.length];
+      ctx.fillStyle = clr;
+      ctx.globalAlpha = vf * 0.8;
+      // Main bloom
       ctx.beginPath();
-      ctx.arc(fx, fy, 1.2 + nv, 0, Math.PI * 2);
+      ctx.arc(fx, fy, 1.6 + nv * 0.8, 0, Math.PI * 2);
       ctx.fill();
-      // Some flowers in small clusters
-      if (nv > 0.65) {
+      // Cluster — 3-5 nearby blooms make a wildflower patch
+      if (nv > 0.55) {
         ctx.beginPath();
-        ctx.arc(fx + 3, fy - 2, 1, 0, Math.PI * 2);
+        ctx.arc(fx + 3, fy - 2, 1.2, 0, Math.PI * 2);
         ctx.fill();
         ctx.beginPath();
-        ctx.arc(fx - 2, fy + 2, 1, 0, Math.PI * 2);
+        ctx.arc(fx - 2.5, fy + 2.5, 1.1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(fx + 1.5, fy + 3, 0.9, 0, Math.PI * 2);
         ctx.fill();
       }
+      if (nv > 0.75) {
+        ctx.beginPath();
+        ctx.arc(fx - 4, fy - 1, 1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Highlight pixel on each bloom
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      ctx.globalAlpha = vf * 0.7;
+      ctx.beginPath();
+      ctx.arc(fx - 0.4, fy - 0.4, 0.5, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
@@ -1673,6 +1714,20 @@ function drawWolf(ctx, wolf, tick) {
     ctx.arc(0, -16, 3.5, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // Howl indicator — when wolf is idle and has other wolves nearby
+  // Shown via a subtle crescent arc rising from the nose during wander state
+  if (wolf.state === "wander" && wolf.howling) {
+    const howlPhase = Math.sin(wolf.age * 0.04) * 0.5 + 0.5;
+    ctx.strokeStyle = `rgba(226, 232, 240, ${0.55 * howlPhase})`;
+    ctx.lineWidth = 1;
+    for (let ring = 0; ring < 3; ring++) {
+      const r = 6 + ring * 4 + howlPhase * 3;
+      ctx.beginPath();
+      ctx.arc(18, -10, r, -Math.PI * 0.85, -Math.PI * 0.35);
+      ctx.stroke();
+    }
+  }
 }
 
 function drawElk(ctx, elk, tick) {
@@ -1683,14 +1738,14 @@ function drawElk(ctx, elk, tick) {
   const isRunning = elk.state === "flee";
   const lp = isRunning ? Math.sin(elk.age * 0.3) * 7 : Math.sin(elk.age * 0.06) * 2.5;
 
-  // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  // Shadow — stronger, elongated for profile grounding
+  ctx.fillStyle = "rgba(0,0,0,0.32)";
   ctx.beginPath();
-  ctx.ellipse(0, 11, 13, 3.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 12, 15, 2.8, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Legs with hooves
-  ctx.strokeStyle = "#6b4423";
+  ctx.strokeStyle = "#5a3818";
   ctx.lineWidth = 2.8;
   ctx.lineCap = "round";
   ctx.beginPath();
@@ -1700,97 +1755,177 @@ function drawElk(ctx, elk, tick) {
   ctx.moveTo(9, 3); ctx.lineTo(9 - lp * 0.4, 12);
   ctx.stroke();
 
-  // Hooves
+  // Hooves — dark definition
   ctx.fillStyle = "#1c1917";
-  ctx.beginPath();
   [-7 + lp, -2 - lp * 0.6, 4 + lp * 0.6, 9 - lp * 0.4].forEach((hx) => {
-    ctx.moveTo(hx, 12);
-    ctx.arc(hx, 12.5, 1.8, 0, Math.PI * 2);
+    ctx.beginPath();
+    ctx.ellipse(hx, 12.2, 1.4, 1.0, 0, 0, Math.PI * 2);
+    ctx.fill();
   });
-  ctx.fill();
 
   // Dust particles when fleeing
   if (isRunning && elk.age % 4 < 2) {
-    ctx.fillStyle = "rgba(139, 117, 94, 0.3)";
+    ctx.fillStyle = "rgba(139, 117, 94, 0.35)";
     ctx.beginPath();
-    ctx.arc(-10 - lp, 8, 2, 0, Math.PI * 2);
+    ctx.arc(-10 - lp, 8, 2.5, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Body
-  const bodyGrad = ctx.createRadialGradient(0, -2, 2, 0, -2, 15);
-  bodyGrad.addColorStop(0, "#c67c3b");
-  bodyGrad.addColorStop(1, "#8b5a23");
+  // Tail — short, visible from side
+  ctx.fillStyle = "#5a3818";
+  ctx.beginPath();
+  ctx.ellipse(-13, -3, 1.5, 2.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body — elongated profile (longer than tall for a proper side view)
+  const bodyGrad = ctx.createLinearGradient(0, -7, 0, 4);
+  bodyGrad.addColorStop(0, "#b07238");   // warm back
+  bodyGrad.addColorStop(0.5, "#a06530");
+  bodyGrad.addColorStop(1, "#7a5028");   // darker underbelly edge
   ctx.fillStyle = bodyGrad;
   ctx.beginPath();
-  ctx.ellipse(0, -2, 14, 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(-1, -2, 14, 6.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Visible back-line stripe — adds shape & dimension
+  ctx.strokeStyle = "rgba(60, 35, 15, 0.55)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(-13, -6);
+  ctx.quadraticCurveTo(-1, -9.5, 11, -7.5);
+  ctx.stroke();
+
+  // Cream rump patch (distinctive elk marking)
+  ctx.fillStyle = "rgba(245, 225, 180, 0.75)";
+  ctx.beginPath();
+  ctx.ellipse(-10, -2, 4, 3.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Lighter belly patch
-  ctx.fillStyle = "rgba(200, 150, 100, 0.35)";
+  ctx.fillStyle = "rgba(220, 180, 130, 0.5)";
   ctx.beginPath();
-  ctx.ellipse(0, 2, 10, 3.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 2, 10, 2.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Thick neck
-  ctx.fillStyle = "#a86f38";
+  // Thick neck — curves from body to head
+  ctx.fillStyle = "#9d6230";
   ctx.beginPath();
   ctx.moveTo(9, -6);
-  ctx.quadraticCurveTo(14, -14, 12, -16);
-  ctx.quadraticCurveTo(9, -13, 8, -6);
+  ctx.quadraticCurveTo(14, -13, 12, -15);
+  ctx.quadraticCurveTo(9, -12, 8, -5);
   ctx.fill();
 
-  // Head
+  // Neck shading
+  ctx.fillStyle = "rgba(60, 35, 15, 0.3)";
+  ctx.beginPath();
+  ctx.moveTo(8, -5);
+  ctx.quadraticCurveTo(11, -9, 13, -14);
+  ctx.lineTo(13, -12);
+  ctx.quadraticCurveTo(10, -7, 8, -3);
+  ctx.fill();
+
+  // Head — more elongated (elk have long muzzles)
   ctx.fillStyle = "#8b5a23";
   ctx.beginPath();
-  ctx.ellipse(12, -16, 5, 4.5, 0.15, 0, Math.PI * 2);
+  ctx.ellipse(13, -15, 5.5, 3.8, 0.15, 0, Math.PI * 2);
+  ctx.fill();
+  // Lighter muzzle tip
+  ctx.fillStyle = "#a8703a";
+  ctx.beginPath();
+  ctx.ellipse(17, -14, 2, 1.5, 0.2, 0, Math.PI * 2);
   ctx.fill();
 
-  // Multi-point antlers
-  ctx.strokeStyle = "#e0ddd9";
-  ctx.lineWidth = 2;
+  // Nose
+  ctx.fillStyle = "#1c1917";
+  ctx.beginPath();
+  ctx.arc(18.5, -14, 0.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ear
+  ctx.fillStyle = "#6e4520";
+  ctx.beginPath();
+  ctx.ellipse(10, -18, 1.4, 2.5, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Multi-point antlers — proportional, swept back
+  ctx.strokeStyle = "#d4d0c8";
+  ctx.lineWidth = 1.8;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
-  ctx.moveTo(12, -20);
-  ctx.lineTo(9, -27); ctx.moveTo(9, -24); ctx.lineTo(6, -26);
-  ctx.moveTo(12, -20);
-  ctx.lineTo(16, -27); ctx.moveTo(16, -24); ctx.lineTo(19, -26);
-  ctx.moveTo(9, -26); ctx.lineTo(7, -30);
-  ctx.moveTo(16, -26); ctx.lineTo(18, -30);
+  // Main beam
+  ctx.moveTo(11, -18);
+  ctx.lineTo(7, -25);
+  ctx.moveTo(11, -18);
+  ctx.lineTo(15, -25);
+  // Tines off left beam
+  ctx.moveTo(9, -22); ctx.lineTo(5, -24);
+  ctx.moveTo(8, -24); ctx.lineTo(4, -27);
+  ctx.moveTo(7, -25); ctx.lineTo(5, -28);
+  // Tines off right beam
+  ctx.moveTo(13, -22); ctx.lineTo(17, -24);
+  ctx.moveTo(14, -24); ctx.lineTo(18, -27);
+  ctx.moveTo(15, -25); ctx.lineTo(17, -28);
   ctx.stroke();
 
-  // Eye
+  // Eye — on the new elongated head
   ctx.fillStyle = "#1c1917";
   ctx.beginPath();
-  ctx.arc(14, -15, 1.4, 0, Math.PI * 2);
+  ctx.arc(13, -15.8, 0.9, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "rgba(255,255,255,0.4)";
+  ctx.fillStyle = "rgba(255,230,150,0.6)";
   ctx.beginPath();
-  ctx.arc(14.4, -15.4, 0.5, 0, Math.PI * 2);
+  ctx.arc(13.2, -16, 0.35, 0, Math.PI * 2);
   ctx.fill();
 
-  // Grazing indicator
+  // Grazing indicator — small green cue
   if (elk.state === "graze") {
     ctx.fillStyle = "rgba(34, 197, 94, 0.6)";
     ctx.beginPath();
-    ctx.arc(12, 2, 2.5, 0, Math.PI * 2);
+    ctx.arc(14, 2, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Alarm pose when fleeing: head up + tail flashing cream
+  if (isRunning) {
+    // Tail flash (white alarm flag)
+    ctx.fillStyle = "rgba(255, 245, 220, 0.85)";
+    ctx.beginPath();
+    ctx.ellipse(-13, -5, 1.8, 2, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
 function drawBeaver(ctx, e, tick) {
-  // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  // Shadow — stronger
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
   ctx.beginPath();
-  ctx.ellipse(e.x + 3, e.y + 5, 7, 2.2, 0, 0, Math.PI * 2);
+  ctx.ellipse(e.x + 3, e.y + 5, 7, 2.0, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Flat tail with texture
+  // Tail-slap animation: when beaver is near river center, occasionally slap
+  // tail creates concentric splash rings on water
+  const slapActive = e.tailSlap && e.tailSlap > 0;
+  const slapT = slapActive ? 1 - e.tailSlap / 30 : 0;
+
+  // Flat tail with texture — lifts up during slap
+  const tailLift = slapActive ? Math.sin(slapT * Math.PI) * 3 : 0;
   ctx.fillStyle = "#5c3f2c";
   ctx.beginPath();
-  ctx.ellipse(e.x - 8, e.y + 1.5, 6, 2.5, 0.25, 0, Math.PI * 2);
+  ctx.ellipse(e.x - 8, e.y + 1.5 - tailLift, 6, 2.5, 0.25 - tailLift * 0.15, 0, Math.PI * 2);
   ctx.fill();
+
+  // Slap ripples on water
+  if (slapActive) {
+    ctx.strokeStyle = `rgba(200, 230, 255, ${0.6 * (1 - slapT)})`;
+    ctx.lineWidth = 1.2;
+    for (let ring = 0; ring < 3; ring++) {
+      const rad = 3 + slapT * 15 + ring * 4;
+      ctx.beginPath();
+      ctx.arc(e.x - 8, e.y + 3, rad, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
 
   // Tail detail lines
   ctx.strokeStyle = "rgba(0,0,0,0.2)";
