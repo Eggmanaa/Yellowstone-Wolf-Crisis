@@ -617,7 +617,9 @@ function updateHunter(h, eco) {
 
 function tickEcosystem(eco) {
   eco.tick++;
-  if (eco.tick % 300 === 0) eco.season++;
+  // Season increments every 1800 ticks = 30s at 60fps.
+  // Full year = 4 seasons = 2 minutes. A 10-min game shows 5 full years.
+  if (eco.tick % 1800 === 0) eco.season++;
   const { W, H } = eco;
 
   for (const e of eco.entities) {
@@ -848,6 +850,20 @@ function renderEcosystem(ctx, eco) {
   const RX = W * TERRAIN.riverPct;
   const MX = W * TERRAIN.mountainStartPct;
   const scaledRW = rw * (W / 960);  // scale river width to canvas
+
+  // ─── SEASONAL CYCLE ──────────────────────────────────────────────────
+  // season increments every 1800 ticks (30s). Full year = 2 minutes.
+  // Derive continuous float so rendering transitions smoothly.
+  const seasonFloat = (eco.season ?? 0) + (tick % 1800) / 1800;
+  const seasonIdx = Math.floor(seasonFloat) % 4;  // 0=spring, 1=summer, 2=autumn, 3=winter
+  const seasonT = seasonFloat % 1;                 // progress within current season (0-1)
+  // Store on eco for drawTree access without threading through arg
+  eco._seasonIdx = seasonIdx;
+  eco._seasonT = seasonT;
+  // Helper: blend current season with next for smooth color shifts
+  const nextSeasonIdx = (seasonIdx + 1) % 4;
+  // Ease the blend (cubic-ish) so the transition hits visibly but not all at once
+  const blend = seasonT < 0.7 ? 0 : (seasonT - 0.7) / 0.3; // blend only in last 30%
 
   // ─── PER-SCENARIO PALETTE TINT — applied at end as overlay ─────────────
   const sid = eco.scenarioId;
@@ -1237,7 +1253,6 @@ function renderEcosystem(ctx, eco) {
   }
 
   // ─── Time-of-day ambient warmth — diagonal sun overlay ────────────────
-  // Warmth goes 0 (cool dawn) → 1 (warm noon) → 0 (cool dusk) cyclically.
   const sunR = Math.round(255 * (0.6 + todWarmth * 0.4));
   const sunG = Math.round(220 * (0.5 + todWarmth * 0.5));
   const sunB = Math.round(140 + (1 - todWarmth) * 80);
@@ -1247,6 +1262,75 @@ function renderEcosystem(ctx, eco) {
   ambGrad.addColorStop(1, `rgba(80, 100, 160, ${0.04 + (1 - todWarmth) * 0.05})`);
   ctx.fillStyle = ambGrad;
   ctx.fillRect(0, 0, W, H);
+
+  // ─── SEASONAL OVERLAY — blend current → next for smooth transitions ───
+  // Spring: faint cool-green, Summer: faint gold, Autumn: rich amber, Winter: cold blue
+  const seasonOverlays = [
+    "rgba(140, 200, 160, 0.05)",  // spring
+    "rgba(250, 210, 120, 0.06)",  // summer
+    "rgba(210, 130, 60, 0.18)",   // autumn — strong warm amber
+    "rgba(170, 200, 230, 0.22)",  // winter — cold blue wash
+  ];
+  // Draw current season overlay
+  ctx.fillStyle = seasonOverlays[seasonIdx];
+  ctx.fillRect(0, 0, W, H);
+  if (blend > 0) {
+    ctx.fillStyle = seasonOverlays[nextSeasonIdx];
+    ctx.globalAlpha = blend;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+
+  // ─── WINTER SNOW COVER — white overlay on meadow areas ────────────────
+  if (seasonIdx === 3 || (seasonIdx === 2 && blend > 0.3)) {
+    // Snow intensity: ramps up through late autumn → full in winter → melts in early spring
+    let snowAlpha;
+    if (seasonIdx === 2) snowAlpha = (blend - 0.3) * 0.6; // late autumn accumulation
+    else snowAlpha = 0.65 - seasonT * 0.25; // winter → spring melt
+    snowAlpha = clamp(snowAlpha, 0, 0.65);
+
+    // Snow on meadow side (avoid river)
+    ctx.fillStyle = `rgba(245, 250, 255, ${snowAlpha})`;
+    ctx.fillRect(0, 0, RX - scaledRW / 2, H);
+
+    // Snow patches — bright white on top of noise texture for depth
+    ctx.fillStyle = `rgba(255, 255, 255, ${snowAlpha * 0.5})`;
+    for (let i = 0; i < 120; i++) {
+      const sx = (i * 187.3 + 17) % (RX - scaledRW / 2 - 20) + 10;
+      const sy = (i * 113.7 + 11) % (H - 20) + 10;
+      const nv = noise2d(sx, sy, 40);
+      if (nv < 0.45) continue;
+      ctx.beginPath();
+      ctx.ellipse(sx, sy, 4 + nv * 4, 2 + nv * 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Snow on forest floor (between river and mountains)
+    ctx.fillStyle = `rgba(245, 250, 255, ${snowAlpha * 0.7})`;
+    ctx.fillRect(RX + scaledRW / 2, 0, MX - RX - scaledRW / 2, H);
+
+    // Falling snow particles drifting diagonally
+    if (snowAlpha > 0.2) {
+      ctx.fillStyle = `rgba(255, 255, 255, ${snowAlpha * 1.2})`;
+      for (let i = 0; i < 60; i++) {
+        const baseX = (i * 97 + 3) % W;
+        const baseY = (i * 73 + 17) % H;
+        const sx = (baseX + tick * 0.5 + Math.sin(tick * 0.01 + i) * 20) % W;
+        const sy = (baseY + tick * 0.8) % H;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 1 + (i % 3) * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // ─── AUTUMN GROUND TINT — golden wash on meadow ────────────────────────
+  if (seasonIdx === 2 && blend < 0.3) {
+    // Ramps up through early autumn, peaks mid, fades into snow in late autumn
+    const autumnAlpha = seasonT < 0.5 ? seasonT * 0.4 : (1 - seasonT) * 0.4;
+    ctx.fillStyle = `rgba(200, 140, 60, ${autumnAlpha})`;
+    ctx.fillRect(0, 0, RX - scaledRW / 2, H);
+  }
 
   // ─── Tourism corridor (highway) — visible band for tourism scenario ────
   if (eco.scenarioId === "tourism") {
@@ -1291,7 +1375,7 @@ function renderEcosystem(ctx, eco) {
   for (const e of sorted) {
     ctx.save();
     switch (e.type) {
-      case TREE: drawTree(ctx, e, vf, tick); break;
+      case TREE: drawTree(ctx, e, vf, tick, { idx: eco._seasonIdx ?? 0, t: eco._seasonT ?? 0 }); break;
       case WOLF: drawWolf(ctx, e, tick); break;
       case ELK: drawElk(ctx, e, tick); break;
       case BEAVER: drawBeaver(ctx, e, tick); break;
@@ -1463,12 +1547,16 @@ function renderEcosystem(ctx, eco) {
 
 // ─── IMPROVED DRAWING FUNCTIONS ───────────────────────────────────────────
 
-function drawTree(ctx, tree, vf, tick) {
+function drawTree(ctx, tree, vf, tick, season) {
   const s = tree.growth;
   const h = 12 + s * 24;
   const w = 6 + s * 16;
   const healthy = tree.health > 50;
   const sway = Math.sin(tick * 0.008 + tree.x * 0.03) * s * 2;
+  const seasonIdx = season?.idx ?? 0;   // 0=spring, 1=summer, 2=autumn, 3=winter
+  const seasonT = season?.t ?? 0;        // progress within season
+  // Use tree.id as a stable pseudo-random to vary autumn colors across trees
+  const idHash = tree.id ? tree.id.charCodeAt(0) : 0;
 
   // Shadow
   ctx.fillStyle = "rgba(0,0,0,0.25)";
@@ -1530,28 +1618,104 @@ function drawTree(ctx, tree, vf, tick) {
     ctx.lineTo(tree.x + sway + w * 0.22, tree.y - h * 0.4);
     ctx.closePath();
     ctx.fill();
+
+    // WINTER: snow dusting on conifer branches
+    if (seasonIdx === 3 && s > 0.3) {
+      ctx.fillStyle = "rgba(250, 253, 255, 0.85)";
+      // Snow on top point
+      ctx.beginPath();
+      ctx.moveTo(tree.x + sway, tree.y - h * 0.62);
+      ctx.lineTo(tree.x + sway - w * 0.18, tree.y - h * 0.5);
+      ctx.lineTo(tree.x + sway + w * 0.18, tree.y - h * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      // Snow on middle layer (partial)
+      ctx.globalAlpha = 0.75;
+      ctx.fillRect(tree.x + sway - w * 0.25, tree.y - h * 0.5, w * 0.5, 1.5);
+      // Snow on bottom layer (light dusting on tips)
+      ctx.globalAlpha = 0.5;
+      ctx.fillRect(tree.x + sway - w * 0.4, tree.y - h * 0.38, w * 0.8, 1);
+      ctx.globalAlpha = 1;
+    }
   } else {
-    // Round willow/aspen canopy
-    const baseGreen = healthy ? lerpColor("#166534", "#22c55e", s * vf) : lerpColor("#854d0e", "#a16207", s);
-    const darkGreen = healthy ? lerpColor("#14532d", "#166534", s * vf) : lerpColor("#713f12", "#854d0e", s);
+    // Round willow/aspen canopy — DECIDUOUS, changes with seasons
+    if (seasonIdx === 3) {
+      // WINTER: bare branches only, no canopy
+      ctx.strokeStyle = healthy ? "rgba(80, 55, 30, 0.9)" : "rgba(60, 40, 20, 0.8)";
+      ctx.lineWidth = 0.8 + s * 0.5;
+      ctx.lineCap = "round";
+      // Main branch fork
+      const trunkTop = tree.y - h * 0.38;
+      ctx.beginPath();
+      ctx.moveTo(tree.x + sway, trunkTop);
+      ctx.quadraticCurveTo(tree.x + sway - w * 0.25, trunkTop - h * 0.2, tree.x + sway - w * 0.35, trunkTop - h * 0.35);
+      ctx.moveTo(tree.x + sway, trunkTop);
+      ctx.quadraticCurveTo(tree.x + sway + w * 0.25, trunkTop - h * 0.2, tree.x + sway + w * 0.35, trunkTop - h * 0.35);
+      ctx.moveTo(tree.x + sway, trunkTop);
+      ctx.lineTo(tree.x + sway + (idHash % 3 - 1) * 2, trunkTop - h * 0.4);
+      // Small twigs
+      ctx.moveTo(tree.x + sway - w * 0.2, trunkTop - h * 0.25);
+      ctx.lineTo(tree.x + sway - w * 0.3, trunkTop - h * 0.38);
+      ctx.moveTo(tree.x + sway + w * 0.2, trunkTop - h * 0.25);
+      ctx.lineTo(tree.x + sway + w * 0.3, trunkTop - h * 0.38);
+      ctx.stroke();
+      // Snow clinging to branches
+      ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+      ctx.beginPath();
+      ctx.ellipse(tree.x + sway - w * 0.2, trunkTop - h * 0.22, 1.5, 1, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(tree.x + sway + w * 0.2, trunkTop - h * 0.22, 1.5, 1, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(tree.x + sway, trunkTop - h * 0.4, 1.5, 0.9, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Seasonal canopy color — varies with idHash for autumn variety
+      let baseGreen, darkGreen;
+      if (seasonIdx === 2) {
+        // AUTUMN — choose among gold, orange, red, deep amber varied per tree
+        const autumnPalette = [
+          { b: "#d97706", d: "#92400e" }, // orange
+          { b: "#eab308", d: "#a16207" }, // gold
+          { b: "#dc2626", d: "#991b1b" }, // red
+          { b: "#b45309", d: "#78350f" }, // amber
+        ];
+        const p = autumnPalette[idHash % 4];
+        // Blend from summer green → autumn color based on seasonT
+        const greenBase = healthy ? lerpColor("#166534", "#22c55e", s * vf) : lerpColor("#854d0e", "#a16207", s);
+        const greenDark = healthy ? lerpColor("#14532d", "#166534", s * vf) : lerpColor("#713f12", "#854d0e", s);
+        baseGreen = lerpColor(greenBase, p.b, seasonT);
+        darkGreen = lerpColor(greenDark, p.d, seasonT);
+      } else if (seasonIdx === 1) {
+        // SUMMER — lush full green
+        baseGreen = healthy ? lerpColor("#1f7a3f", "#2fd96a", s * vf) : lerpColor("#854d0e", "#a16207", s);
+        darkGreen = healthy ? lerpColor("#165a2d", "#1f7a3f", s * vf) : lerpColor("#713f12", "#854d0e", s);
+      } else {
+        // SPRING — fresh green (default)
+        baseGreen = healthy ? lerpColor("#166534", "#22c55e", s * vf) : lerpColor("#854d0e", "#a16207", s);
+        darkGreen = healthy ? lerpColor("#14532d", "#166534", s * vf) : lerpColor("#713f12", "#854d0e", s);
+      }
 
-    // Bottom canopy layer
-    ctx.fillStyle = darkGreen;
-    ctx.beginPath();
-    ctx.ellipse(tree.x + sway, tree.y - h * 0.35, w / 2 + 2, h * 0.4, 0, 0, Math.PI * 2);
-    ctx.fill();
+      // Bottom canopy layer
+      ctx.fillStyle = darkGreen;
+      ctx.beginPath();
+      ctx.ellipse(tree.x + sway, tree.y - h * 0.35, w / 2 + 2, h * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Middle canopy
-    ctx.fillStyle = baseGreen;
-    ctx.beginPath();
-    ctx.ellipse(tree.x + sway, tree.y - h * 0.48, w / 2 - 0.5, h * 0.35, 0, 0, Math.PI * 2);
-    ctx.fill();
+      // Middle canopy
+      ctx.fillStyle = baseGreen;
+      ctx.beginPath();
+      ctx.ellipse(tree.x + sway, tree.y - h * 0.48, w / 2 - 0.5, h * 0.35, 0, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Top canopy
-    ctx.fillStyle = lerpColor(baseGreen, "#4ade80", 0.2);
-    ctx.beginPath();
-    ctx.ellipse(tree.x + sway - 1, tree.y - h * 0.58, w / 2 - 2, h * 0.28, 0, 0, Math.PI * 2);
-    ctx.fill();
+      // Top canopy
+      const topTint = seasonIdx === 2 ? "#fcd34d" : "#4ade80";
+      ctx.fillStyle = lerpColor(baseGreen, topTint, 0.2);
+      ctx.beginPath();
+      ctx.ellipse(tree.x + sway - 1, tree.y - h * 0.58, w / 2 - 2, h * 0.28, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Highlight
