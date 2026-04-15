@@ -4957,11 +4957,14 @@ export default function Simulation() {
             <p style={{ fontSize: m ? 10 : 12, color: "#94a3b8", margin: "0 0 16px", padding: m ? "8px 10px" : "10px 14px", background: "#0f172a", borderRadius: 8, lineHeight: 1.5 }}>
               <strong style={{ color: "#60a5fa" }}>In real Yellowstone:</strong> This recovery took from 1995 to roughly 2010 — about 15 years. You did it in {Math.floor(gameTimerRef.current / 60)} seconds ({Math.round(GAME_DURATION / 60 - gameTimerRef.current / 60)}s remaining)!
             </p>
-            <div style={{ display: "flex", gap: m ? 6 : 10, justifyContent: "center", flexDirection: m ? "column" : "row" }}>
-              <button onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 24px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
+            <div style={{ display: "flex", gap: m ? 6 : 10, justifyContent: "center", flexDirection: m ? "column" : "row", flexWrap: "wrap" }}>
+              <button onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
                 Play Again
               </button>
-              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 24px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
+              <button onClick={() => { handleReset(); setShowHelp(true); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #3b82f6, #6366f1)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
+                🏞️ New Scenario
+              </button>
+              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
                 Free Play
               </button>
             </div>
@@ -4988,11 +4991,14 @@ export default function Simulation() {
             <p style={{ fontSize: m ? 9 : 11, color: "#64748b", margin: "0 0 16px", padding: m ? "6px 10px" : "8px 12px", background: "#0f172a", borderRadius: 8 }}>
               <strong style={{ color: "#eab308" }}>Hint:</strong> {score < 40 ? "Try adding wolves early — they control elk and trigger the whole cascade of recovery." : score < 60 ? "You're on the right track. Focus on getting wolves and elk balanced first, then let vegetation recover." : "So close! Once the balance score hits " + WIN_THRESHOLD + ", you need to hold it steady. Avoid adding too many of any one species."}
             </p>
-            <div style={{ display: "flex", gap: m ? 6 : 10, justifyContent: "center", flexDirection: m ? "column" : "row" }}>
-              <button onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 24px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #dc2626, #ea580c)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
+            <div style={{ display: "flex", gap: m ? 6 : 10, justifyContent: "center", flexDirection: m ? "column" : "row", flexWrap: "wrap" }}>
+              <button onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #dc2626, #ea580c)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
                 Try Again
               </button>
-              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 24px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
+              <button onClick={() => { handleReset(); setShowHelp(true); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #3b82f6, #6366f1)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
+                🏞️ New Scenario
+              </button>
+              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
                 Free Play
               </button>
             </div>
