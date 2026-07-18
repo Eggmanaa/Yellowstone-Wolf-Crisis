@@ -844,39 +844,18 @@ function hexA(hex, a) {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-function renderEcosystem(ctx, eco) {
-  const { W, H, vegetationHealth: vh, riverHealth: rh, riverWidth: rw, tick } = eco;
-  const vf = vh / 100;
-  const RX = W * TERRAIN.riverPct;
-  const MX = W * TERRAIN.mountainStartPct;
-  const scaledRW = rw * (W / 960);  // scale river width to canvas
-
-  // ─── SEASONAL CYCLE ──────────────────────────────────────────────────
-  // season increments every 1800 ticks (30s). Full year = 2 minutes.
-  // Derive continuous float so rendering transitions smoothly.
-  const seasonFloat = (eco.season ?? 0) + (tick % 1800) / 1800;
-  const seasonIdx = Math.floor(seasonFloat) % 4;  // 0=spring, 1=summer, 2=autumn, 3=winter
-  const seasonT = seasonFloat % 1;                 // progress within current season (0-1)
-  // Store on eco for drawTree access without threading through arg
-  eco._seasonIdx = seasonIdx;
-  eco._seasonT = seasonT;
-  // Helper: blend current season with next for smooth color shifts
-  const nextSeasonIdx = (seasonIdx + 1) % 4;
-  // Ease the blend (cubic-ish) so the transition hits visibly but not all at once
-  const blend = seasonT < 0.7 ? 0 : (seasonT - 0.7) / 0.3; // blend only in last 30%
-
-  // ─── PER-SCENARIO PALETTE TINT — applied at end as overlay ─────────────
-  const sid = eco.scenarioId;
-  const scenarioOverlay = sid === "drought"  ? "rgba(218,165,90,0.16)"   // sepia/dust
-                        : sid === "cwd"      ? "rgba(140,180,120,0.10)"  // sickly green
-                        : sid === "poaching" ? "rgba(160,70,70,0.08)"    // tense red wash
-                        : sid === "tourism"  ? "rgba(170,190,210,0.08)"  // hazy gray
-                        : null;
-
-  // ─── TIME-OF-DAY CYCLE — slow ambient warmth drift ─────────────────────
-  // Cycles ~every 5 simulated minutes so a 10-min game shows 2 cycles.
-  const todPhase = (Math.sin(tick * 0.00035) + 1) * 0.5; // 0=cool dawn, 1=warm noon
-  const todWarmth = 0.4 + todPhase * 0.6;
+// ═══════════════════════════════════════════════════════════════════════════════
+// STATIC TERRAIN LAYER BUILDER — rasterizes the whole landscape once into an
+// offscreen canvas at device resolution. Frees the per-frame budget for
+// wildlife, water and weather, which is what makes the sim feel alive.
+// ═══════════════════════════════════════════════════════════════════════════════
+function buildTerrainLayer(W, H, dpr, vf, rh, RX, MX, scaledRW) {
+  const cv = document.createElement("canvas");
+  cv.width = Math.max(1, Math.round(W * dpr));
+  cv.height = Math.max(1, Math.round(H * dpr));
+  const ctx = cv.getContext("2d");
+  ctx.scale(dpr, dpr);
+  const bakedWarmth = 0.62; // fixed midday light; live drift is tinted per frame
 
   // ─── FULL TERRAIN BASE (entire canvas is ground — top-down view) ──────
   const meadowBase = lerpColor("#3d6b2e", "#5a9a40", vf);
@@ -911,8 +890,8 @@ function renderEcosystem(ctx, eco) {
       const py = ((i * 91.13 + 7) % H) | 0;
       const sz = 4 + ((i * 7) % 5);
       const shadeT = (i * 13) % 100 / 100;
-      const baseGreen = lerpColor("#0a2410", "#1a3a1f", vf);
-      const lightGreen = lerpColor("#1a4222", "#2e5a32", vf);
+      const baseGreen = lerpColor("#0d2c14", "#1e4224", vf);
+      const lightGreen = lerpColor("#1e4a26", "#33643a", vf);
       // Conifer triangle (pointy)
       ctx.fillStyle = lerpColor(baseGreen, lightGreen, shadeT);
       ctx.beginPath();
@@ -949,13 +928,13 @@ function renderEcosystem(ctx, eco) {
       // Dirt patches where noise is low
       if (combined < 0.3) {
         ctx.fillStyle = lerpColor("#5c4a2a", "#6b5a34", vf);
-        ctx.globalAlpha = (0.3 - combined) * 0.6;
+        ctx.globalAlpha = (0.3 - combined) * 0.85;
         ctx.fillRect(x, y, noiseStep, noiseStep);
       }
       // Lush patches where noise is high
       else if (combined > 0.7) {
         ctx.fillStyle = meadowLight;
-        ctx.globalAlpha = (combined - 0.7) * 0.5;
+        ctx.globalAlpha = (combined - 0.7) * 0.65;
         ctx.fillRect(x, y, noiseStep, noiseStep);
       }
       // Subtle variation elsewhere
@@ -967,6 +946,20 @@ function renderEcosystem(ctx, eco) {
     }
   }
   ctx.globalAlpha = 1;
+
+  // Large-scale rolling shade — soft valleys and rises across the meadow
+  for (let x = 0; x < RX - scaledRW / 2; x += 12) {
+    for (let y = 0; y < H; y += 12) {
+      const rv = noise2d(x + 900, y + 700, 150);
+      if (rv < 0.42) {
+        ctx.fillStyle = `rgba(15, 30, 12, ${((0.42 - rv) * 0.5).toFixed(3)})`;
+        ctx.fillRect(x, y, 12, 12);
+      } else if (rv > 0.62) {
+        ctx.fillStyle = `rgba(190, 230, 150, ${((rv - 0.62) * 0.22).toFixed(3)})`;
+        ctx.fillRect(x, y, 12, 12);
+      }
+    }
+  }
 
   // Forest floor noise — darker, with needle/leaf litter feel
   for (let x = Math.floor(RX + scaledRW / 2); x < MX; x += noiseStep) {
@@ -988,15 +981,15 @@ function renderEcosystem(ctx, eco) {
   // ─── Mountain range (far right background — 3 parallax layers) ────────
   // Warm earthy grays — the Absaroka/Gallatin ranges as seen from the valley
   const mtBgGrad = ctx.createLinearGradient(MX, 0, W, 0);
-  mtBgGrad.addColorStop(0, "#5a4a3a");      // warm earth-tan near forest edge
-  mtBgGrad.addColorStop(0.4, "#7a6a58");    // mid-distance brown-gray
+  mtBgGrad.addColorStop(0, "#4a3d30");      // warm earth-tan near forest edge
+  mtBgGrad.addColorStop(0.4, "#6e5f4e");    // mid-distance brown-gray
   mtBgGrad.addColorStop(1, "#9a8a78");      // furthest haze
   ctx.fillStyle = mtBgGrad;
   ctx.fillRect(MX, 0, W - MX, H);
 
   // FAR range — palest, smallest, most distant
   const farRange = (yPct) => MX + (W - MX) * 0.55 + Math.sin(yPct * 6.2 + 0.3) * (W - MX) * 0.08 + Math.sin(yPct * 18 + 1) * (W - MX) * 0.025;
-  ctx.fillStyle = lerpColor("#8a8478", "#a09a8a", todWarmth);
+  ctx.fillStyle = lerpColor("#8a8478", "#a09a8a", bakedWarmth);
   ctx.beginPath();
   ctx.moveTo(MX, 0);
   for (let y = 0; y <= H; y += 3) ctx.lineTo(farRange(y / H), y);
@@ -1018,7 +1011,7 @@ function renderEcosystem(ctx, eco) {
 
   // MID range — mid-tone, medium silhouette
   const midRange = (yPct) => MX + (W - MX) * 0.35 + Math.sin(yPct * 5.4 + 0.8) * (W - MX) * 0.11 + Math.sin(yPct * 13 + 2.2) * (W - MX) * 0.04;
-  ctx.fillStyle = lerpColor("#5e5246", "#6e6256", todWarmth);
+  ctx.fillStyle = lerpColor("#5e5246", "#6e6256", bakedWarmth);
   ctx.beginPath();
   ctx.moveTo(MX, 0);
   for (let y = 0; y <= H; y += 3) ctx.lineTo(midRange(y / H), y);
@@ -1040,13 +1033,23 @@ function renderEcosystem(ctx, eco) {
 
   // NEAR range — darkest, sharpest peaks, casts toward viewer
   const nearRange = (yPct) => MX + (W - MX) * 0.12 + Math.sin(yPct * 4.6 + 1.7) * (W - MX) * 0.09 + Math.sin(yPct * 11 + 3.1) * (W - MX) * 0.035;
-  ctx.fillStyle = lerpColor("#4d3f32", "#5c4c3c", todWarmth);
+  ctx.fillStyle = lerpColor("#3f332a", "#4e4034", bakedWarmth);
   ctx.beginPath();
   ctx.moveTo(MX, 0);
   for (let y = 0; y <= H; y += 3) ctx.lineTo(nearRange(y / H), y);
   ctx.lineTo(MX, H);
   ctx.closePath();
   ctx.fill();
+  // Ridge outline — separates the near range from the background haze
+  ctx.strokeStyle = "rgba(25, 20, 15, 0.45)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for (let y = 0; y <= H; y += 3) {
+    const x = nearRange(y / H);
+    if (y === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
   // Sparse snow on near peaks (only at peak points where slope is steep)
   ctx.fillStyle = "rgba(230, 240, 245, 0.7)";
   for (let i = 0; i < 8; i++) {
@@ -1131,7 +1134,6 @@ function renderEcosystem(ctx, eco) {
     ctx.fill();
   }
 
-  // ─── River with scenic water effects ──────────────────────────────────
   // Muddy banks (gradient transition from ground to water)
   const bankW = scaledRW * 0.4;
   const leftBankGrad = ctx.createLinearGradient(RX - scaledRW / 2 - bankW, 0, RX - scaledRW / 2, 0);
@@ -1164,6 +1166,97 @@ function renderEcosystem(ctx, eco) {
   ctx.fillStyle = riverGrad;
   ctx.fillRect(RX - scaledRW / 2, 0, scaledRW, H);
 
+  // River stones along banks
+  ctx.fillStyle = "rgba(80, 90, 85, 0.35)";
+  for (let i = 0; i < 30; i++) {
+    const sy = (i * 127.1 + 20) % H;
+    const leftS = RX - scaledRW / 2 - 4 + Math.sin(i * 5.3) * 3;
+    const rightS = RX + scaledRW / 2 + 4 + Math.sin(i * 3.7) * 3;
+    const sz = 2 + Math.sin(i * 2.1) * 1.5;
+    ctx.beginPath(); ctx.ellipse(leftS, sy, sz, sz * 0.7, i * 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(rightS, sy, sz, sz * 0.7, i * 0.3, 0, Math.PI * 2); ctx.fill();
+  }
+
+
+  return cv;
+}
+
+function renderEcosystem(ctx, eco) {
+  const { W, H, vegetationHealth: vh, riverHealth: rh, riverWidth: rw, tick } = eco;
+  const vf = vh / 100;
+  const RX = W * TERRAIN.riverPct;
+  const MX = W * TERRAIN.mountainStartPct;
+  const scaledRW = rw * (W / 960);  // scale river width to canvas
+
+  // ─── HiDPI: draw in CSS-pixel space, rasterize at device resolution ───
+  const dpr = W > 0 ? ctx.canvas.width / W : 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  // ─── SEASONAL CYCLE ──────────────────────────────────────────────────
+  // season increments every 1800 ticks (30s). Full year = 2 minutes.
+  // Derive continuous float so rendering transitions smoothly.
+  const seasonFloat = (eco.season ?? 0) + (tick % 1800) / 1800;
+  const seasonIdx = Math.floor(seasonFloat) % 4;  // 0=spring, 1=summer, 2=autumn, 3=winter
+  const seasonT = seasonFloat % 1;                 // progress within current season (0-1)
+  // Store on eco for drawTree access without threading through arg
+  eco._seasonIdx = seasonIdx;
+  eco._seasonT = seasonT;
+  // Helper: blend current season with next for smooth color shifts
+  const nextSeasonIdx = (seasonIdx + 1) % 4;
+  // Ease the blend (cubic-ish) so the transition hits visibly but not all at once
+  const blend = seasonT < 0.7 ? 0 : (seasonT - 0.7) / 0.3; // blend only in last 30%
+
+  // ─── PER-SCENARIO PALETTE TINT — applied at end as overlay ─────────────
+  const sid = eco.scenarioId;
+  const scenarioOverlay = sid === "drought"  ? "rgba(218,165,90,0.16)"   // sepia/dust
+                        : sid === "cwd"      ? "rgba(140,180,120,0.10)"  // sickly green
+                        : sid === "poaching" ? "rgba(160,70,70,0.08)"    // tense red wash
+                        : sid === "tourism"  ? "rgba(170,190,210,0.08)"  // hazy gray
+                        : null;
+
+  // ─── TIME-OF-DAY CYCLE — slow ambient warmth drift ─────────────────────
+  // Cycles ~every 5 simulated minutes so a 10-min game shows 2 cycles.
+  const todPhase = (Math.sin(tick * 0.00035) + 1) * 0.5; // 0=cool dawn, 1=warm noon
+  const todWarmth = 0.4 + todPhase * 0.6;
+
+  // ─── STATIC TERRAIN — cached offscreen layer ──────────────────────────
+  // The full landscape (ground, noise fields, mountains, forest, riverbed,
+  // wildflowers) is rasterized once and re-used every frame. Rebuilt only
+  // when the landscape itself materially changes.
+  const terrainKey = [Math.round(W), Math.round(H), Math.round(dpr * 4), Math.round(vf * 14), Math.round(scaledRW), rh > 60 ? 2 : rh > 30 ? 1 : 0].join("|");
+  if (!eco._terrain || eco._terrain.key !== terrainKey) {
+    eco._terrain = { key: terrainKey, cv: buildTerrainLayer(W, H, dpr, vf, rh, RX, MX, scaledRW) };
+  }
+  ctx.drawImage(eco._terrain.cv, 0, 0, W, H);
+
+  // Live time-of-day tint over the mountain strip (keeps the slow
+  // dawn-to-noon light drift alive on top of the baked lighting)
+  ctx.fillStyle = todWarmth > 0.5
+    ? `rgba(255, 214, 150, ${(todWarmth - 0.5) * 0.10})`
+    : `rgba(90, 110, 160, ${(0.5 - todWarmth) * 0.10})`;
+  ctx.fillRect(MX, 0, W - MX, H);
+
+  // ─── CLOUD SHADOWS — soft shapes drifting across the valley ──────────
+  for (let ci = 0; ci < 3; ci++) {
+    const cw2 = W * (0.34 + ci * 0.09);
+    const cx = ((tick * (0.14 + ci * 0.06) + ci * W * 0.45) % (W + cw2 * 2)) - cw2;
+    const cy = H * (0.16 + ci * 0.3) + Math.sin(tick * 0.001 + ci * 2.4) * H * 0.05;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1, 0.42);
+    const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, cw2 * 0.55);
+    cg.addColorStop(0, "rgba(8, 14, 24, 0.10)");
+    cg.addColorStop(0.7, "rgba(8, 14, 24, 0.055)");
+    cg.addColorStop(1, "rgba(8, 14, 24, 0)");
+    ctx.fillStyle = cg;
+    ctx.beginPath();
+    ctx.arc(0, 0, cw2 * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ─── River with scenic water effects ──────────────────────────────────
   // River current — subtle wavy lines (less chaotic, more flowing)
   for (let layer = 0; layer < 3; layer++) {
     ctx.strokeStyle = `rgba(170, 220, 255, ${0.05 + rh * 0.0015 + layer * 0.008})`;
@@ -1205,17 +1298,6 @@ function renderEcosystem(ctx, eco) {
       ctx.arc(sx, sy, 0.8 + sparkle * 0.5, 0, Math.PI * 2);
       ctx.fill();
     }
-  }
-
-  // River stones along banks
-  ctx.fillStyle = "rgba(80, 90, 85, 0.35)";
-  for (let i = 0; i < 30; i++) {
-    const sy = (i * 127.1 + 20) % H;
-    const leftS = RX - scaledRW / 2 - 4 + Math.sin(i * 5.3) * 3;
-    const rightS = RX + scaledRW / 2 + 4 + Math.sin(i * 3.7) * 3;
-    const sz = 2 + Math.sin(i * 2.1) * 1.5;
-    ctx.beginPath(); ctx.ellipse(leftS, sy, sz, sz * 0.7, i * 0.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(rightS, sy, sz, sz * 0.7, i * 0.3, 0, Math.PI * 2); ctx.fill();
   }
 
   // Foam at edges
@@ -1330,6 +1412,24 @@ function renderEcosystem(ctx, eco) {
     const autumnAlpha = seasonT < 0.5 ? seasonT * 0.4 : (1 - seasonT) * 0.4;
     ctx.fillStyle = `rgba(200, 140, 60, ${autumnAlpha})`;
     ctx.fillRect(0, 0, RX - scaledRW / 2, H);
+  }
+
+  // ─── AUTUMN LEAVES — drifting on the valley breeze ────────────────────
+  if (seasonIdx === 2) {
+    const leafColors = ["#d97706", "#dc2626", "#eab308", "#b45309"];
+    for (let li = 0; li < 16; li++) {
+      const lx = ((li * 173 + 40) + tick * (0.4 + (li % 4) * 0.13)) % (W + 30) - 15;
+      const ly = ((li * 97 + 20) + tick * (0.5 + (li % 3) * 0.2)) % (H + 20) - 10;
+      const flutter = Math.sin(tick * 0.05 + li * 1.7) * 3;
+      ctx.save();
+      ctx.translate(lx + flutter, ly);
+      ctx.rotate(tick * 0.03 + li * 0.8);
+      ctx.fillStyle = hexA(leafColors[li % 4], 0.7);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 2.6, 1.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   // ─── Tourism corridor (highway) — visible band for tourism scenario ────
@@ -1512,8 +1612,8 @@ function renderEcosystem(ctx, eco) {
   // ─── Vignette (darken edges/corners — stronger for atmospheric depth) ─
   const vigGrad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.30, W / 2, H / 2, Math.max(W, H) * 0.78);
   vigGrad.addColorStop(0, "transparent");
-  vigGrad.addColorStop(0.7, "rgba(10, 15, 20, 0.18)");
-  vigGrad.addColorStop(1, "rgba(5, 10, 18, 0.42)");
+  vigGrad.addColorStop(0.7, "rgba(12, 14, 18, 0.12)");
+  vigGrad.addColorStop(1, "rgba(8, 10, 16, 0.30)");
   ctx.fillStyle = vigGrad;
   ctx.fillRect(0, 0, W, H);
 
@@ -1547,6 +1647,23 @@ function renderEcosystem(ctx, eco) {
 
 // ─── IMPROVED DRAWING FUNCTIONS ───────────────────────────────────────────
 
+// Soft radial ground shadow — reads as ambient occlusion instead of a hard blob
+function softShadow(ctx, x, y, rx, ry, a = 0.3) {
+  if (rx <= 0.5) return;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(1, Math.max(0.08, ry / rx));
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+  g.addColorStop(0, `rgba(10, 16, 8, ${a})`);
+  g.addColorStop(0.65, `rgba(10, 16, 8, ${a * 0.5})`);
+  g.addColorStop(1, "rgba(10, 16, 8, 0)");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, 0, rx, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawTree(ctx, tree, vf, tick, season) {
   const s = tree.growth;
   const h = 12 + s * 24;
@@ -1559,10 +1676,7 @@ function drawTree(ctx, tree, vf, tick, season) {
   const idHash = tree.id ? tree.id.charCodeAt(0) : 0;
 
   // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.beginPath();
-  ctx.ellipse(tree.x + 5, tree.y + 4, w * 0.5 * s, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
+  softShadow(ctx, tree.x + 5, tree.y + 4, Math.max(3, w * 0.55 * s + 2), 3.2, 0.32);
 
   // Trunk with bark texture
   const trunkGrad = ctx.createLinearGradient(tree.x - w / 4, tree.y - h * 0.4, tree.x + w / 4, tree.y - h * 0.4);
@@ -1756,10 +1870,7 @@ function drawWolf(ctx, wolf, tick) {
   const legPhase = isRunning ? Math.sin(wolf.age * 0.3) * 6 : Math.sin(wolf.age * 0.08) * 2.5;
 
   // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.beginPath();
-  ctx.ellipse(0, 8, 11, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
+  softShadow(ctx, 0, 8, 12.5, 3.4, 0.34);
 
   // Tail - bushy
   ctx.strokeStyle = "#8b7355";
@@ -1903,10 +2014,7 @@ function drawElk(ctx, elk, tick) {
   const lp = isRunning ? Math.sin(elk.age * 0.3) * 7 : Math.sin(elk.age * 0.06) * 2.5;
 
   // Shadow — stronger, elongated for profile grounding
-  ctx.fillStyle = "rgba(0,0,0,0.32)";
-  ctx.beginPath();
-  ctx.ellipse(0, 12, 15, 2.8, 0, 0, Math.PI * 2);
-  ctx.fill();
+  softShadow(ctx, 0, 12, 16, 3.1, 0.38);
 
   // Legs with hooves
   ctx.strokeStyle = "#5a3818";
@@ -2062,10 +2170,7 @@ function drawElk(ctx, elk, tick) {
 
 function drawBeaver(ctx, e, tick) {
   // Shadow — stronger
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.beginPath();
-  ctx.ellipse(e.x + 3, e.y + 5, 7, 2.0, 0, 0, Math.PI * 2);
-  ctx.fill();
+  softShadow(ctx, e.x + 3, e.y + 5, 8, 2.3, 0.36);
 
   // Tail-slap animation: when beaver is near river center, occasionally slap
   // tail creates concentric splash rings on water
@@ -2160,10 +2265,7 @@ function drawCoyote(ctx, e, tick) {
   const lp = Math.sin(e.age * 0.15) * 3.5;
 
   // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.18)";
-  ctx.beginPath();
-  ctx.ellipse(0, 6, 7, 2.2, 0, 0, Math.PI * 2);
-  ctx.fill();
+  softShadow(ctx, 0, 6, 8, 2.5, 0.28);
 
   // Slender legs (distinct from wolf)
   ctx.strokeStyle = "#d47c3b";
@@ -2318,10 +2420,7 @@ function drawBird(ctx, e) {
   ctx.save();
 
   // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.18)";
-  ctx.beginPath();
-  ctx.ellipse(e.x, e.y + 9, 5, 1.4, 0, 0, Math.PI * 2);
-  ctx.fill();
+  softShadow(ctx, e.x, e.y + 9, 5.5, 1.6, 0.22);
 
   // Body — rust breast, blue back
   const bodyGrad = ctx.createLinearGradient(e.x, e.y - 3 + bob, e.x, e.y + 3 + bob);
@@ -2402,10 +2501,7 @@ function drawRabbit(ctx, e, tick) {
   const hop = e.state === "flee" ? Math.abs(Math.sin(e.age * 0.3)) * 4 : 0;
 
   // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.15)";
-  ctx.beginPath();
-  ctx.ellipse(e.x, e.y + 5, 5, 1.8, 0, 0, Math.PI * 2);
-  ctx.fill();
+  softShadow(ctx, e.x, e.y + 5, 5.5, 2.0, 0.22);
 
   // Body
   ctx.fillStyle = "#e5e7eb";
@@ -2479,10 +2575,7 @@ function drawBear(ctx, e, tick) {
   const bob = Math.sin(e.age * 0.04) * 1.5;
 
   // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.beginPath();
-  ctx.ellipse(0, 10, 10, 3, 0, 0, Math.PI * 2);
-  ctx.fill();
+  softShadow(ctx, 0, 10, 11, 3.3, 0.38);
 
   // Legs
   const lp = Math.sin(e.age * 0.08) * 3;
@@ -2544,10 +2637,7 @@ function drawHunter(ctx, e, tick) {
   const lp = Math.sin(e.age * 0.06) * 2.5;
 
   // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.beginPath();
-  ctx.ellipse(0, 12, 7, 2.5, 0, 0, Math.PI * 2);
-  ctx.fill();
+  softShadow(ctx, 0, 12, 8, 2.7, 0.32);
 
   // Legs
   ctx.strokeStyle = "#5c4a2d";
@@ -4106,11 +4196,14 @@ export default function Simulation() {
       const rect = containerRef.current.getBoundingClientRect();
       const w = Math.floor(rect.width);
       const h = Math.floor(rect.height);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       setCanvasSize({ w, h });
       const canvas = canvasRef.current;
       if (canvas && ecoRef.current) {
-        canvas.width = w;
-        canvas.height = h;
+        // Render at device resolution for crisp HiDPI output;
+        // game logic stays in CSS pixels (eco.W / eco.H).
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
         ecoRef.current.W = w;
         ecoRef.current.H = h;
       }
@@ -4517,15 +4610,15 @@ export default function Simulation() {
   // ─── STYLES (mobile-responsive) ──────────────────────────────────────
   const m = isMobile;
   const S = {
-    root: { width: "100vw", height: "100dvh", display: "flex", flexDirection: "column", background: "#0a0f1a", overflow: "hidden", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', color: "#e2e8f0", position: "relative" },
-    topBar: { display: m ? "flex" : "flex", flexDirection: m ? "row" : "row", alignItems: "center", gap: m ? 4 : 10, padding: m ? "4px 8px" : "8px 16px", background: "#0f172a", borderBottom: "1px solid #1e293b", flexShrink: 0, height: m ? "auto" : 40, minHeight: m ? 34 : 40, zIndex: 10, overflowX: m ? "auto" : "visible", overflowY: "hidden", WebkitOverflowScrolling: "touch", flexWrap: m ? "wrap" : "nowrap" },
+    root: { width: "100vw", height: "100dvh", display: "flex", flexDirection: "column", background: "radial-gradient(1300px 700px at 75% -12%, #142137 0%, #0a0f1a 55%)", overflow: "hidden", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", color: "#e2e8f0", position: "relative" },
+    topBar: { display: "flex", alignItems: "center", gap: m ? 4 : 10, padding: m ? "4px 8px" : "6px 16px", background: "linear-gradient(180deg, rgba(17,26,44,0.97), rgba(12,18,32,0.94))", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderBottom: "1px solid rgba(148,163,184,0.12)", boxShadow: "0 4px 18px rgba(0,0,0,0.35)", flexShrink: 0, height: m ? "auto" : 46, minHeight: m ? 34 : 46, zIndex: 10, overflowX: m ? "auto" : "visible", overflowY: "hidden", WebkitOverflowScrolling: "touch", flexWrap: m ? "wrap" : "nowrap" },
     main: { flex: 1, display: "flex", overflow: "hidden", position: "relative", minHeight: 0 },
-    panel: { width: m ? 0 : (panelCollapsed ? 44 : 200), background: "#0f172a", borderRight: m ? "none" : "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0, transition: "width 0.2s ease", overflow: "hidden", zIndex: 5 },
-    canvasWrap: { flex: 1, position: "relative", overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", paddingBottom: m ? 54 : 0 },
-    bottomDock: { display: m ? "flex" : "none", position: m ? "fixed" : "static", bottom: 0, left: 0, right: 0, height: 54, background: "rgba(15,23,42,0.97)", borderTop: "2px solid #334155", overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", alignItems: "center", padding: "0 8px", gap: 8, flexShrink: 0, zIndex: 20 },
-    dockSpeciesBtn: (active, color) => ({ minWidth: 48, width: 48, height: 48, borderRadius: "50%", border: active ? `3px solid ${color}` : "2px solid #475569", background: active ? `${color}30` : "rgba(30,41,59,0.7)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, cursor: "pointer", flexShrink: 0, transition: "all 0.15s ease", boxShadow: active ? `0 0 12px ${color}50` : "none" }),
-    btn: (active, color) => ({ padding: m ? "4px 8px" : "4px 12px", borderRadius: 6, border: active ? `1px solid ${color}` : "1px solid #334155", background: active ? `${color}20` : "transparent", color: active ? color : "#94a3b8", fontSize: m ? 10 : 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: m ? 28 : "auto" }),
-    btnSolid: (bg) => ({ padding: m ? "5px 10px" : "6px 14px", borderRadius: 6, border: "none", background: bg, color: "#fff", fontSize: m ? 11 : 12, fontWeight: 700, cursor: "pointer", minHeight: m ? 28 : "auto" }),
+    panel: { width: m ? 0 : (panelCollapsed ? 44 : 210), background: "linear-gradient(180deg, rgba(15,23,42,0.98), rgba(11,17,30,0.98))", borderRight: m ? "none" : "1px solid rgba(148,163,184,0.10)", display: "flex", flexDirection: "column", flexShrink: 0, transition: "width 0.25s cubic-bezier(0.4,0,0.2,1)", overflow: "hidden", zIndex: 5 },
+    canvasWrap: { flex: 1, position: "relative", overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", paddingBottom: m ? 58 : 0 },
+    bottomDock: { display: m ? "flex" : "none", position: m ? "fixed" : "static", bottom: 0, left: 0, right: 0, height: 58, background: "rgba(12,18,32,0.96)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", borderTop: "1px solid rgba(148,163,184,0.16)", boxShadow: "0 -6px 24px rgba(0,0,0,0.4)", overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", alignItems: "center", padding: "0 8px", gap: 8, flexShrink: 0, zIndex: 20 },
+    dockSpeciesBtn: (active, color) => ({ minWidth: 48, width: 48, height: 48, borderRadius: "50%", border: active ? `2px solid ${color}` : "2px solid rgba(71,85,105,0.6)", background: active ? `radial-gradient(circle at 35% 30%, ${color}45, ${color}18)` : "rgba(30,41,59,0.7)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, cursor: "pointer", flexShrink: 0, boxShadow: active ? `0 0 16px ${color}60, inset 0 0 8px ${color}30` : "inset 0 1px 0 rgba(255,255,255,0.05)" }),
+    btn: (active, color) => ({ padding: m ? "4px 8px" : "5px 12px", borderRadius: 8, border: active ? `1px solid ${color}` : "1px solid rgba(148,163,184,0.18)", background: active ? `${color}22` : "rgba(30,41,59,0.35)", color: active ? color : "#94a3b8", fontSize: m ? 10 : 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: m ? 28 : "auto", boxShadow: active ? `0 0 10px ${color}28, inset 0 0 8px ${color}14` : "none" }),
+    btnSolid: (bg) => ({ padding: m ? "5px 10px" : "6px 16px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.14)", background: `linear-gradient(180deg, ${bg}, ${bg}cc)`, color: "#fff", fontSize: m ? 11 : 12, fontWeight: 700, cursor: "pointer", minHeight: m ? 28 : "auto", boxShadow: `0 2px 12px ${bg}55, inset 0 1px 0 rgba(255,255,255,0.22)`, textShadow: "0 1px 2px rgba(0,0,0,0.35)" }),
   };
 
   return (
@@ -4551,24 +4644,30 @@ export default function Simulation() {
 
       {/* ═══ TOP BAR ═══ */}
       <div style={S.topBar}>
-        <div style={{ fontSize: 14, fontWeight: 800, background: "linear-gradient(135deg, #60a5fa, #34d399)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-          YELLOWSTONE
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginRight: m ? 2 : 6 }}>
+          <span style={{ fontSize: m ? 15 : 19, filter: "drop-shadow(0 0 8px rgba(251,191,36,0.4))" }}>🐺</span>
+          <div style={{ lineHeight: 1 }}>
+            <div style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: m ? 13 : 16, fontWeight: 900, letterSpacing: 1, background: "linear-gradient(120deg, #fde68a, #f59e0b 55%, #ef4444)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              YELLOWSTONE
+            </div>
+            {!m && <div style={{ fontSize: 7.5, fontWeight: 700, letterSpacing: 3.6, color: "#64748b", marginTop: 2 }}>WOLF CRISIS</div>}
+          </div>
         </div>
 
         {/* Score */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#1e293b", borderRadius: 6, padding: "3px 10px" }}>
-          <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>BALANCE</span>
-          <div style={{ width: 60, height: 5, background: "#334155", borderRadius: 3, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${score}%`, background: getScoreColor(score), borderRadius: 3, transition: "width 0.3s" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(30,41,59,0.65)", border: "1px solid rgba(148,163,184,0.14)", borderRadius: 99, padding: "3px 12px", boxShadow: `0 0 16px ${getScoreColor(score)}2e` }}>
+          <span style={{ fontSize: 9, color: "#7c8ba1", fontWeight: 800, letterSpacing: 1.2 }}>BALANCE</span>
+          <div style={{ width: 64, height: 6, background: "rgba(51,65,85,0.8)", borderRadius: 99, overflow: "hidden", boxShadow: "inset 0 1px 2px rgba(0,0,0,0.4)" }}>
+            <div style={{ height: "100%", width: `${score}%`, background: `linear-gradient(90deg, ${getScoreColor(score)}aa, ${getScoreColor(score)})`, borderRadius: 99, transition: "width 0.3s", boxShadow: `0 0 8px ${getScoreColor(score)}90` }} />
           </div>
-          <span style={{ fontSize: 13, fontWeight: 800, color: getScoreColor(score) }}>{score}</span>
+          <span style={{ fontSize: 13, fontWeight: 800, color: getScoreColor(score), fontVariantNumeric: "tabular-nums", textShadow: `0 0 10px ${getScoreColor(score)}55` }}>{score}</span>
           <span style={{ fontSize: 10, color: getScoreColor(score), fontWeight: 600 }}>{getScoreLabel(score)}</span>
         </div>
 
         {/* Game timer */}
         {gameState === "playing" && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#1e293b", borderRadius: 6, padding: "3px 10px" }}>
-            <span style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>TIME</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(30,41,59,0.65)", border: "1px solid rgba(148,163,184,0.14)", borderRadius: 99, padding: "3px 12px" }}>
+            <span style={{ fontSize: 9, color: "#7c8ba1", fontWeight: 800, letterSpacing: 1.2 }}>TIME</span>
             <span style={{ fontSize: 13, fontWeight: 800, color: gameTimerRef.current > GAME_DURATION * 0.8 ? "#ef4444" : "#e2e8f0", fontVariantNumeric: "tabular-nums" }}>
               {Math.max(0, Math.ceil((GAME_DURATION - gameTimerRef.current) / 60))}s
             </span>
@@ -4590,7 +4689,7 @@ export default function Simulation() {
         {gameState === "playing" && (() => {
           const sc = SCENARIOS.find(s => s.id === scenarioId);
           return sc ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 4, background: "#1e293b", borderRadius: 6, padding: "3px 10px" }} title={sc.blurb}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, background: "rgba(30,41,59,0.65)", border: "1px solid rgba(148,163,184,0.14)", borderRadius: 99, padding: "3px 12px" }} title={sc.blurb}>
               <span style={{ fontSize: 14 }}>{sc.emoji}</span>
               <span style={{ fontSize: 10, fontWeight: 700, color: "#cbd5e1" }}>{sc.title}</span>
             </div>
@@ -4599,36 +4698,36 @@ export default function Simulation() {
 
         {/* Sim controls */}
         {gameState === "ready" ? (
-          <button onClick={handleStartGame} style={S.btnSolid("#16a34a")}>▶ Start</button>
+          <button className="ub" onClick={handleStartGame} style={S.btnSolid("#16a34a")}>▶ Start</button>
         ) : gameState === "playing" ? (
-          <button onClick={() => setRunning(!running)} style={S.btnSolid(running ? "#dc2626" : "#16a34a")}>
+          <button className="ub" onClick={() => setRunning(!running)} style={S.btnSolid(running ? "#dc2626" : "#16a34a")}>
             {running ? "⏸ Pause" : "▶ Resume"}
           </button>
         ) : (
-          <button onClick={handleStartGame} style={S.btnSolid("#3b82f6")}>🔄 New Challenge</button>
+          <button className="ub" onClick={handleStartGame} style={S.btnSolid("#3b82f6")}>🔄 New Challenge</button>
         )}
-        <button onClick={handleReset} style={S.btn(false, "#64748b")}>Reset</button>
+        <button className="ub" onClick={handleReset} style={S.btn(false, "#64748b")}>Reset</button>
 
         <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
           <span style={{ fontSize: 10, color: "#475569" }}>Speed</span>
           {[1, 2, 4].map(s => (
-            <button key={s} onClick={() => setSpeed(s)} style={{ ...S.btn(speed === s, "#eab308"), padding: "2px 8px", fontSize: 10 }}>{s}x</button>
+            <button className="ub" key={s} onClick={() => setSpeed(s)} style={{ ...S.btn(speed === s, "#eab308"), padding: "2px 8px", fontSize: 10 }}>{s}x</button>
           ))}
         </div>
 
         <div style={{ flex: 1 }} />
 
-        <button onClick={handleAudioToggle} style={S.btn(audioInit, "#a78bfa")} title={audioInit ? (audioMuted ? 'Unmute' : 'Mute') : 'Click for sound'}>
+        <button className="ub" onClick={handleAudioToggle} style={S.btn(audioInit, "#a78bfa")} title={audioInit ? (audioMuted ? 'Unmute' : 'Mute') : 'Click for sound'}>
           {audioInit ? (audioMuted ? '🔇' : '🔊') : '🔇'}{!m && ' Sound'}
         </button>
-        <button onClick={handleNarratorToggle} style={{ ...S.btn(narratorEnabled, "#f472b6"), position: "relative" }} title={narratorEnabled ? 'Mute narrator' : 'Enable narrator'}>
+        <button className="ub" onClick={handleNarratorToggle} style={{ ...S.btn(narratorEnabled, "#f472b6"), position: "relative" }} title={narratorEnabled ? 'Mute narrator' : 'Enable narrator'}>
           {narratorEnabled ? '🎙️' : '🔕'}{!m && ' Narrator'}
           {narratorActive && narratorEnabled && <span style={{ position: "absolute", top: -2, right: -2, width: 7, height: 7, borderRadius: "50%", background: "#f472b6", animation: "pulse 1s infinite" }} />}
         </button>
-        <button onClick={() => setShowWeb(!showWeb)} style={S.btn(showWeb, "#fb923c")} title="Food Web Diagram">🕸️ {m ? "" : "Web"}</button>
-        {!m && <button onClick={() => setShowLearn(!showLearn)} style={S.btn(showLearn, "#60a5fa")}>📚 Learn</button>}
-        <button onClick={() => setShowChart(!showChart)} style={S.btn(showChart, "#60a5fa")} title="Predator-Prey Chart (toggle on/off)">📊 {m ? "" : "Chart"}</button>
-        <button onClick={() => setShowHelp(true)} style={S.btn(false, "#64748b")}>{m ? '?' : '?'}</button>
+        <button className="ub" onClick={() => setShowWeb(!showWeb)} style={S.btn(showWeb, "#fb923c")} title="Food Web Diagram">🕸️ {m ? "" : "Web"}</button>
+        {!m && <button className="ub" onClick={() => setShowLearn(!showLearn)} style={S.btn(showLearn, "#60a5fa")}>📚 Learn</button>}
+        <button className="ub" onClick={() => setShowChart(!showChart)} style={S.btn(showChart, "#60a5fa")} title="Predator-Prey Chart (toggle on/off)">📊 {m ? "" : "Chart"}</button>
+        <button className="ub" onClick={() => setShowHelp(true)} style={S.btn(false, "#64748b")}>{m ? '?' : '?'}</button>
       </div>
 
       {/* ═══ MAIN AREA ═══ */}
@@ -4636,31 +4735,31 @@ export default function Simulation() {
         {/* ─── Left Panel (desktop only) ─── */}
         {!m && (
         <div style={S.panel}>
-          <button onClick={() => setPanelCollapsed(!panelCollapsed)} style={{ background: "transparent", border: "none", color: "#64748b", padding: "8px", cursor: "pointer", fontSize: 14, textAlign: "center" }}>
+          <button className="ub" onClick={() => setPanelCollapsed(!panelCollapsed)} style={{ background: "transparent", border: "none", color: "#64748b", padding: "8px", cursor: "pointer", fontSize: 14, textAlign: "center" }}>
             {panelCollapsed ? "▸" : "◂"}
           </button>
 
           {!panelCollapsed && (
             <>
               {/* Add mode label */}
-              <div style={{ padding: "5px 8px", margin: "0 8px 6px", borderRadius: 6, background: "#166534", textAlign: "center", fontSize: 11, fontWeight: 700, color: "#86efac" }}>
+              <div style={{ padding: "6px 8px", margin: "0 8px 8px", borderRadius: 9, background: "linear-gradient(135deg, rgba(22,101,52,0.9), rgba(13,148,136,0.55))", border: "1px solid rgba(74,222,128,0.35)", textAlign: "center", fontSize: 11, fontWeight: 700, color: "#bbf7d0", textShadow: "0 1px 2px rgba(0,0,0,0.4)", animation: "glowBreathe 3s ease-in-out infinite" }}>
                 + Click to Add Species
               </div>
 
               {/* Species buttons */}
               <div style={{ flex: 1, overflowY: "auto", padding: "0 6px" }}>
                 {SPECIES.map(sp => (
-                  <button key={sp.type} onClick={() => setSelectedTool(sp.type)} style={{
+                  <button className="ub" key={sp.type} onClick={() => setSelectedTool(sp.type)} style={{
                     display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "5px 7px", borderRadius: 6, marginBottom: 2,
                     border: selectedTool === sp.type ? `2px solid ${sp.color}` : "2px solid transparent",
                     background: selectedTool === sp.type ? `${sp.color}15` : "transparent",
                     color: "#e2e8f0", cursor: "pointer", textAlign: "left",
                   }}>
-                    <span style={{ fontSize: 15 }}>{sp.icon}</span>
+                    <span style={{ fontSize: 16, filter: selectedTool === sp.type ? `drop-shadow(0 0 6px ${sp.color})` : "none" }}>{sp.icon}</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 11, fontWeight: 600 }}>{sp.label}</div>
-                      <div style={{ fontSize: 9, color: "#64748b" }}>{stats[sp.key] ?? 0}</div>
                     </div>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: selectedTool === sp.type ? sp.color : "#64748b", background: "rgba(51,65,85,0.5)", borderRadius: 99, padding: "1px 8px", fontVariantNumeric: "tabular-nums" }}>{stats[sp.key] ?? 0}</span>
                   </button>
                 ))}
               </div>
@@ -4694,15 +4793,15 @@ export default function Simulation() {
                   <span style={{ color: "#34d399" }}>🌿 Vegetation</span>
                   <span style={{ color: "#34d399", fontWeight: 700 }}>{stats.vegetationHealth}%</span>
                 </div>
-                <div style={{ height: 3, background: "#1e293b", borderRadius: 2, overflow: "hidden", marginBottom: 4 }}>
-                  <div style={{ height: "100%", width: `${stats.vegetationHealth}%`, background: "#34d399", borderRadius: 2 }} />
+                <div style={{ height: 6, background: "rgba(30,41,59,0.8)", borderRadius: 99, overflow: "hidden", marginBottom: 5, boxShadow: "inset 0 1px 2px rgba(0,0,0,0.4)" }}>
+                  <div style={{ height: "100%", width: `${stats.vegetationHealth}%`, background: "linear-gradient(90deg, #10b981, #34d399)", borderRadius: 99, boxShadow: "0 0 8px rgba(52,211,153,0.5)", transition: "width 0.4s" }} />
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, marginBottom: 3 }}>
                   <span style={{ color: "#60a5fa" }}>🏞️ River</span>
                   <span style={{ color: "#60a5fa", fontWeight: 700 }}>{stats.riverHealth}%</span>
                 </div>
-                <div style={{ height: 3, background: "#1e293b", borderRadius: 2, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${stats.riverHealth}%`, background: "#60a5fa", borderRadius: 2 }} />
+                <div style={{ height: 6, background: "rgba(30,41,59,0.8)", borderRadius: 99, overflow: "hidden", boxShadow: "inset 0 1px 2px rgba(0,0,0,0.4)" }}>
+                  <div style={{ height: "100%", width: `${stats.riverHealth}%`, background: "linear-gradient(90deg, #3b82f6, #60a5fa)", borderRadius: 99, boxShadow: "0 0 8px rgba(96,165,250,0.5)", transition: "width 0.4s" }} />
                 </div>
               </div>
             </>
@@ -4716,15 +4815,15 @@ export default function Simulation() {
           <div ref={containerRef} style={{ ...S.canvasWrap, flex: 1 }}>
           <canvas
             ref={canvasRef}
-            width={canvasSize.w}
-            height={canvasSize.h}
+            width={Math.round(canvasSize.w * Math.min((typeof window !== "undefined" ? window.devicePixelRatio : 1) || 1, 2))}
+            height={Math.round(canvasSize.h * Math.min((typeof window !== "undefined" ? window.devicePixelRatio : 1) || 1, 2))}
             onClick={handleCanvasClick}
-            style={{ display: "block", width: "100%", height: "100%", cursor: "crosshair", imageRendering: "crisp-edges" }}
+            style={{ display: "block", width: "100%", height: "100%", cursor: "crosshair" }}
           />
 
           {/* Tool cursor label + compact HUD */}
           <div style={{ position: "absolute", top: m ? 4 : 8, left: m ? 4 : 8, pointerEvents: "none", zIndex: 3 }}>
-            <div style={{ background: "rgba(15,23,42,0.88)", borderRadius: 6, padding: m ? "3px 8px" : "4px 10px", fontSize: m ? 10 : 11, color: "#94a3b8", border: "1px solid #334155", marginBottom: 4 }}>
+            <div style={{ background: "rgba(13,19,32,0.82)", backdropFilter: "blur(8px)", borderRadius: 99, padding: m ? "3px 10px" : "4px 13px", fontSize: m ? 10 : 11, fontWeight: 600, color: "#cbd5e1", border: `1px solid ${selectedInfo?.color ?? "#334155"}55`, boxShadow: `0 0 12px ${selectedInfo?.color ?? "#000"}25`, marginBottom: 4 }}>
               + {selectedInfo?.icon} {selectedInfo?.label}
             </div>
             {/* Mini population HUD (especially useful on mobile) */}
@@ -4747,9 +4846,11 @@ export default function Simulation() {
             <div style={{ position: "absolute", bottom: m ? 62 : 12, left: 12, maxWidth: 340, pointerEvents: "none", zIndex: 4 }}>
               {alerts.slice(0, 3).map((a, i) => (
                 <div key={i} style={{
-                  background: a.sev === "crit" ? "rgba(69,10,10,0.94)" : "rgba(66,32,6,0.94)",
-                  border: `1px solid ${a.sev === "crit" ? "#dc2626" : "#ca8a04"}`,
-                  borderRadius: 8, padding: "7px 11px", marginBottom: 5, backdropFilter: "blur(5px)",
+                  background: "rgba(13,19,32,0.9)",
+                  border: "1px solid rgba(148,163,184,0.14)",
+                  borderLeft: `3px solid ${a.sev === "crit" ? "#ef4444" : "#eab308"}`,
+                  borderRadius: 10, padding: "7px 11px", marginBottom: 5, backdropFilter: "blur(8px)",
+                  boxShadow: "0 6px 18px rgba(0,0,0,0.35)", animation: "slideInLeft 0.3s ease",
                 }}>
                   <span style={{ fontWeight: 700, fontSize: 11, color: a.sev === "crit" ? "#fca5a5" : "#fcd34d" }}>{a.icon} {a.title}</span>
                   <span style={{ fontSize: 10, color: "#d6d3d1", marginLeft: 6 }}>{a.msg}</span>
@@ -4776,9 +4877,9 @@ export default function Simulation() {
           {/* Season & Year indicator */}
           {running && ecoRef.current && (
             <div style={{
-              position: "absolute", top: 8, right: 8, background: "rgba(15,23,42,0.85)", borderRadius: 8,
-              padding: "4px 12px", fontSize: 11, color: "#94a3b8", pointerEvents: "none", border: "1px solid #334155",
-              display: "flex", alignItems: "center", gap: 8,
+              position: "absolute", top: 8, right: 8, background: "rgba(13,19,32,0.82)", backdropFilter: "blur(8px)", borderRadius: 99,
+              padding: "4px 14px", fontSize: 11, color: "#94a3b8", pointerEvents: "none", border: "1px solid rgba(148,163,184,0.16)",
+              boxShadow: "0 4px 14px rgba(0,0,0,0.3)", display: "flex", alignItems: "center", gap: 8,
             }}>
               <span style={{ fontWeight: 700, color: ["#86efac","#22c55e","#f97316","#93c5fd"][Math.floor(ecoRef.current.season % 4)] }}>
                 {["Spring","Summer","Autumn","Winter"][Math.floor(ecoRef.current.season % 4)]}
@@ -4799,7 +4900,7 @@ export default function Simulation() {
             <div style={{ position: "absolute", top: 12, right: 12, width: 320, maxHeight: "calc(100vh - 80px)", background: "rgba(15,23,42,0.96)", borderRadius: 12, padding: 14, border: "1px solid #334155", backdropFilter: "blur(8px)", zIndex: 6, overflow: "hidden", display: "flex", flexDirection: "column", pointerEvents: "auto" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: "#60a5fa" }}>📚 Ecological Insights</span>
-                <button onClick={() => setShowLearn(false)} style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>✕</button>
+                <button className="ub" onClick={() => setShowLearn(false)} style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>✕</button>
               </div>
 
               {currentInsight && (
@@ -4838,13 +4939,13 @@ export default function Simulation() {
                   { key: "habitat", label: "Habitat" },
                   { key: "balance", label: "Score" },
                 ].map(t => (
-                  <button key={t.key} onClick={() => setChartTab(t.key)} style={{
+                  <button className="ub" key={t.key} onClick={() => setChartTab(t.key)} style={{
                     padding: "3px 9px", borderRadius: 5, border: "none", fontSize: 10, fontWeight: 600, cursor: "pointer",
                     background: chartTab === t.key ? "#334155" : "transparent", color: chartTab === t.key ? "#fff" : "#64748b",
                   }}>{t.label}</button>
                 ))}
                 <div style={{ flex: 1 }} />
-                <button onClick={() => setShowChart(false)} style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>✕</button>
+                <button className="ub" onClick={() => setShowChart(false)} style={{ background: "transparent", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>✕</button>
               </div>
               <div style={{ height: 180 }}>
                 {history.length < 2 ? (
@@ -4931,7 +5032,7 @@ export default function Simulation() {
                 )}
               </div>
               {SPECIES.map(sp => (
-                <button key={sp.type} onClick={() => setSelectedTool(sp.type)}
+                <button className="ub" key={sp.type} onClick={() => setSelectedTool(sp.type)}
                   style={S.dockSpeciesBtn(selectedTool === sp.type, sp.color)}
                   title={`${sp.label} (${stats[sp.key] ?? 0})`}
                 >{sp.icon}</button>
@@ -4948,9 +5049,9 @@ export default function Simulation() {
       {/* ═══ VICTORY MODAL ═══ */}
       {gameState === "won" && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-          <div style={{ background: "linear-gradient(135deg, #0f2a1a, #1e293b)", borderRadius: 16, padding: m ? 20 : 32, maxWidth: m ? "90vw" : 500, margin: 20, border: "2px solid #22c55e", textAlign: "center" }}>
-            <div style={{ fontSize: m ? 36 : 48, marginBottom: 12 }}>🐺🌲🏔️</div>
-            <h2 style={{ fontSize: m ? 18 : 24, fontWeight: 800, margin: "0 0 8px", color: "#86efac" }}>Ecosystem Restored!</h2>
+          <div style={{ background: "linear-gradient(160deg, #0f2a1a, #101b2e 70%)", borderRadius: 20, padding: m ? 20 : 34, maxWidth: m ? "90vw" : 520, margin: 20, border: "1px solid rgba(34,197,94,0.5)", boxShadow: "0 0 60px rgba(34,197,94,0.22), 0 30px 90px rgba(0,0,0,0.6)", textAlign: "center", animation: "popIn 0.45s cubic-bezier(0.34, 1.4, 0.64, 1)" }}>
+            <div style={{ fontSize: m ? 36 : 50, marginBottom: 12, filter: "drop-shadow(0 6px 20px rgba(34,197,94,0.45))" }}>🐺🌲🏔️</div>
+            <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: m ? 20 : 28, fontWeight: 900, margin: "0 0 8px", color: "#86efac", textShadow: "0 0 24px rgba(34,197,94,0.4)" }}>Ecosystem Restored!</h2>
             <p style={{ fontSize: m ? 12 : 14, color: "#cbd5e1", lineHeight: 1.6, margin: "0 0 16px" }}>
               You achieved a balanced ecosystem and held it stable. Wolves are controlling elk, vegetation is thriving, rivers are healthy, and the entire food web is functioning.
             </p>
@@ -4958,13 +5059,13 @@ export default function Simulation() {
               <strong style={{ color: "#60a5fa" }}>In real Yellowstone:</strong> This recovery took from 1995 to roughly 2010 — about 15 years. You did it in {Math.floor(gameTimerRef.current / 60)} seconds ({Math.round(GAME_DURATION / 60 - gameTimerRef.current / 60)}s remaining)!
             </p>
             <div style={{ display: "flex", gap: m ? 6 : 10, justifyContent: "center", flexDirection: m ? "column" : "row", flexWrap: "wrap" }}>
-              <button onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
+              <button className="ub" onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #16a34a, #0d9488)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
                 Play Again
               </button>
-              <button onClick={() => { handleReset(); setShowHelp(true); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #3b82f6, #6366f1)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
+              <button className="ub" onClick={() => { handleReset(); setShowHelp(true); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #3b82f6, #6366f1)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
                 🏞️ New Scenario
               </button>
-              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
+              <button className="ub" onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
                 Free Play
               </button>
             </div>
@@ -4975,9 +5076,9 @@ export default function Simulation() {
       {/* ═══ LOSS MODAL ═══ */}
       {gameState === "lost" && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-          <div style={{ background: "linear-gradient(135deg, #2a0f0f, #1e293b)", borderRadius: 16, padding: m ? 20 : 32, maxWidth: m ? "90vw" : 500, margin: 20, border: "2px solid #ef4444", textAlign: "center" }}>
-            <div style={{ fontSize: m ? 36 : 48, marginBottom: 12 }}>{lossReason === "collapse" ? "🏜️💀" : "⏰💀"}</div>
-            <h2 style={{ fontSize: m ? 18 : 24, fontWeight: 800, margin: "0 0 8px", color: "#fca5a5" }}>
+          <div style={{ background: "linear-gradient(160deg, #2a0f0f, #101b2e 70%)", borderRadius: 20, padding: m ? 20 : 34, maxWidth: m ? "90vw" : 520, margin: 20, border: "1px solid rgba(239,68,68,0.5)", boxShadow: "0 0 60px rgba(239,68,68,0.2), 0 30px 90px rgba(0,0,0,0.6)", textAlign: "center", animation: "popIn 0.45s cubic-bezier(0.34, 1.4, 0.64, 1)" }}>
+            <div style={{ fontSize: m ? 36 : 50, marginBottom: 12, filter: "drop-shadow(0 6px 20px rgba(239,68,68,0.4))" }}>{lossReason === "collapse" ? "🏜️💀" : "⏰💀"}</div>
+            <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: m ? 20 : 28, fontWeight: 900, margin: "0 0 8px", color: "#fca5a5" }}>
               {lossReason === "collapse" ? "Ecosystem Collapsed" : "Time Expired"}
             </h2>
             <p style={{ fontSize: m ? 12 : 14, color: "#cbd5e1", lineHeight: 1.6, margin: "0 0 16px" }}>
@@ -4992,13 +5093,13 @@ export default function Simulation() {
               <strong style={{ color: "#eab308" }}>Hint:</strong> {score < 40 ? "Try adding wolves early — they control elk and trigger the whole cascade of recovery." : score < 60 ? "You're on the right track. Focus on getting wolves and elk balanced first, then let vegetation recover." : "So close! Once the balance score hits " + WIN_THRESHOLD + ", you need to hold it steady. Avoid adding too many of any one species."}
             </p>
             <div style={{ display: "flex", gap: m ? 6 : 10, justifyContent: "center", flexDirection: m ? "column" : "row", flexWrap: "wrap" }}>
-              <button onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #dc2626, #ea580c)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
+              <button className="ub" onClick={handleStartGame} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #dc2626, #ea580c)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
                 Try Again
               </button>
-              <button onClick={() => { handleReset(); setShowHelp(true); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #3b82f6, #6366f1)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
+              <button className="ub" onClick={() => { handleReset(); setShowHelp(true); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #3b82f6, #6366f1)", color: "#fff", fontWeight: 700, fontSize: m ? 12 : 14, cursor: "pointer" }}>
                 🏞️ New Scenario
               </button>
-              <button onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
+              <button className="ub" onClick={() => { handleReset(); setShowHelp(false); }} style={{ padding: m ? "8px 16px" : "10px 22px", borderRadius: 8, border: "1px solid #334155", background: "transparent", color: "#94a3b8", fontWeight: 600, fontSize: m ? 11 : 13, cursor: "pointer" }}>
                 Free Play
               </button>
             </div>
@@ -5009,10 +5110,10 @@ export default function Simulation() {
       {/* ═══ INTRO / SCENARIO PICKER MODAL ═══ */}
       {showHelp && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 12 }}>
-          <div style={{ background: "linear-gradient(135deg, #0f172a, #1e293b)", borderRadius: 16, padding: m ? "18px 16px 14px" : "24px 28px 20px", maxWidth: m ? "94vw" : 720, width: "100%", margin: 12, border: "1px solid #334155", maxHeight: "92vh", overflowY: "auto" }}>
+          <div style={{ background: "linear-gradient(165deg, #13203a 0%, #0d1526 55%, #0f1a2e 100%)", borderRadius: 20, padding: m ? "18px 16px 14px" : "26px 30px 22px", maxWidth: m ? "94vw" : 730, width: "100%", margin: 12, border: "1px solid rgba(148,163,184,0.16)", boxShadow: "0 30px 90px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.05)", maxHeight: "92vh", overflowY: "auto", animation: "popIn 0.4s cubic-bezier(0.34, 1.4, 0.64, 1)" }}>
             <div style={{ textAlign: "center", marginBottom: m ? 10 : 14 }}>
-              <div style={{ fontSize: m ? 28 : 36, marginBottom: 4 }}>🐺🏔️</div>
-              <h2 style={{ fontSize: m ? 16 : 22, fontWeight: 800, margin: "0 0 4px", background: "linear-gradient(135deg, #ef4444, #f97316)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              <div style={{ fontSize: m ? 30 : 42, marginBottom: 4, filter: "drop-shadow(0 6px 18px rgba(249,115,22,0.35))" }}>🐺🏔️</div>
+              <h2 style={{ fontFamily: "'Fraunces', Georgia, serif", fontSize: m ? 22 : 32, fontWeight: 900, letterSpacing: 0.3, margin: "0 0 6px", background: "linear-gradient(120deg, #fde68a 0%, #f59e0b 45%, #ef4444 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
                 Yellowstone Wolf Crisis
               </h2>
               <p style={{ fontSize: m ? 10 : 12, color: "#94a3b8", margin: "0 0 4px" }}>
@@ -5023,17 +5124,18 @@ export default function Simulation() {
             <div style={{ display: "grid", gridTemplateColumns: m ? "1fr" : "repeat(auto-fit, minmax(280px, 1fr))", gap: m ? 8 : 10 }}>
               {SCENARIOS.map(sc => (
                 <button
+                  className="ub card-lift"
                   key={sc.id}
                   onClick={() => { setShowHelp(false); setScenarioId(sc.id); startScenario(sc); }}
                   style={{
-                    padding: m ? "10px 12px" : "12px 14px",
-                    borderRadius: 10,
-                    border: scenarioId === sc.id ? "2px solid #22c55e" : "1px solid #334155",
-                    background: "linear-gradient(135deg, #0f172a, #1e293b)",
+                    padding: m ? "10px 12px" : "13px 15px",
+                    borderRadius: 13,
+                    border: scenarioId === sc.id ? "2px solid #22c55e" : "1px solid rgba(148,163,184,0.15)",
+                    background: "linear-gradient(150deg, rgba(30,41,59,0.55), rgba(15,23,42,0.92))",
+                    boxShadow: "0 4px 14px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04)",
                     color: "#e2e8f0",
                     textAlign: "left",
                     cursor: "pointer",
-                    transition: "all 0.15s",
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -5057,7 +5159,7 @@ export default function Simulation() {
         <div style={{ position: "fixed", top: m ? 58 : 78, right: m ? 8 : 16, maxWidth: m ? 280 : 340, background: "linear-gradient(135deg, #0c1d3a, #1e293b)", borderRadius: 10, padding: m ? "10px 12px" : "12px 14px", border: "1px solid #3b82f6", boxShadow: "0 4px 16px rgba(59, 130, 246, 0.3)", zIndex: 50, animation: "fadeInUp 0.4s ease-out" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
             <div style={{ fontSize: m ? 9 : 10, color: "#60a5fa", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>Real Yellowstone Data</div>
-            <button onClick={() => setDataCard(null)} style={{ background: "none", border: "none", color: "#64748b", fontSize: 14, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+            <button className="ub" onClick={() => setDataCard(null)} style={{ background: "none", border: "none", color: "#64748b", fontSize: 14, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
           </div>
           <div style={{ fontSize: m ? 11 : 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>{dataCard.title}</div>
           <div style={{ fontSize: m ? 10 : 11, color: "#fbbf24", marginBottom: 6 }}>Your game: <strong>{dataCard.yourStat(stats)}</strong></div>
