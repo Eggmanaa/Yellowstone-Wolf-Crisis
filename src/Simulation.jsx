@@ -4454,7 +4454,7 @@ export default function Simulation() {
       } else {
         healthyStreakRef.current = 0;
       }
-      if (healthyStreakRef.current % 60 === 0) setHealthyStreak(healthyStreakRef.current);
+      setHealthyStreak(healthyStreakRef.current); // every frame — drives the victory countdown
 
       // Track collapse streak — score below threshold for sustained period
       if (eco.balanceScore < COLLAPSE_THRESHOLD) {
@@ -4553,7 +4553,7 @@ export default function Simulation() {
     }
 
     animRef.current = requestAnimationFrame(loop);
-  }, [speed, audioInit, narratorEnabled]);
+  }, [speed, audioInit, narratorEnabled, gameState, scenarioId, dataCard]);
 
   useEffect(() => {
     if (running) animRef.current = requestAnimationFrame(loop);
@@ -5025,6 +5025,44 @@ export default function Simulation() {
               </div>
             )}
           </div>
+
+          {/* Victory countdown — visible while balance is held at the win threshold */}
+          {gameState === "playing" && score >= WIN_THRESHOLD && (() => {
+            const victorySeconds = Math.max(1, Math.ceil((WIN_STREAK_NEEDED - healthyStreak) / 60));
+            const victoryProgress = Math.min(1, healthyStreak / WIN_STREAK_NEEDED);
+            const urgent = victorySeconds <= 5;
+            const ringC = urgent ? "#fbbf24" : "#22c55e";
+            return (
+              <>
+                {/* soft green glow around the whole valley while holding */}
+                <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 5, boxShadow: `inset 0 0 90px ${urgent ? "rgba(251,191,36,0.28)" : "rgba(34,197,94,0.24)"}` }} />
+                <div style={{
+                  position: "absolute", top: m ? 44 : 14, left: "50%", zIndex: 7, pointerEvents: "none",
+                  display: "flex", alignItems: "center", gap: m ? 8 : 11,
+                  background: "rgba(6, 30, 16, 0.88)", backdropFilter: "blur(10px)",
+                  border: `1px solid ${urgent ? "rgba(251,191,36,0.6)" : "rgba(34,197,94,0.55)"}`,
+                  borderRadius: 99, padding: m ? "6px 13px" : "8px 18px",
+                  animation: `victoryPulse ${urgent ? 0.55 : 1.3}s ease-in-out infinite`,
+                }}>
+                  <svg width={m ? 30 : 40} height={m ? 30 : 40} viewBox="0 0 40 40">
+                    <circle cx="20" cy="20" r="16" fill="none" stroke={`${ringC}33`} strokeWidth="4" />
+                    <circle cx="20" cy="20" r="16" fill="none" stroke={ringC} strokeWidth="4" strokeLinecap="round"
+                      strokeDasharray={Math.PI * 32} strokeDashoffset={Math.PI * 32 * (1 - victoryProgress)}
+                      transform="rotate(-90 20 20)" style={{ transition: "stroke-dashoffset 0.15s linear" }} />
+                    <text x="20" y="25.5" textAnchor="middle" fill={urgent ? "#fde68a" : "#bbf7d0"} fontSize="14" fontWeight="800">{victorySeconds}</text>
+                  </svg>
+                  <div style={{ lineHeight: 1.25 }}>
+                    <div style={{ fontSize: m ? 10 : 12, fontWeight: 800, color: urgent ? "#fde68a" : "#86efac", letterSpacing: 1.2 }}>
+                      ECOSYSTEM IN BALANCE
+                    </div>
+                    <div style={{ fontSize: m ? 9 : 10.5, fontWeight: 600, color: urgent ? "#fbbf24" : "#4ade80" }}>
+                      {urgent ? `Almost there — ${victorySeconds}s!` : `Victory in ${victorySeconds}s — hold steady`}
+                    </div>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
 
           {/* Alerts overlay */}
           {alerts.length > 0 && (
