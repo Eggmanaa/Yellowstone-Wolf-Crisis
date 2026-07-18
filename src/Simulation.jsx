@@ -1813,7 +1813,7 @@ function drawTree(ctx, tree, vf, tick, season) {
   }
 
   // Choose tree type (willow vs conifer based on position)
-  const isConifer = tree.x > (ctx.canvas?.width ?? 500) * 0.6;
+  const isConifer = tree.x > (ctx.canvas ? ctx.canvas.width / (ctx.getTransform().a || 1) : 500) * 0.6;
 
   if (isConifer) {
     // Pointed conifer canopy
@@ -4320,7 +4320,7 @@ export default function Simulation() {
   const ecoRef = useRef(null);
   const animRef = useRef(null);
   const insightCounterRef = useRef({});
-  const [canvasSize, setCanvasSize] = useState({ w: 1280, h: 720 });
+  const [canvasSize, setCanvasSize] = useState({ w: 1280, h: 720, lw: 1280, lh: 720 });
   const [running, setRunning] = useState(false);
   const [stats, setStats] = useState({ wolves: 0, elk: 65, trees: 55, beavers: 3, coyotes: 18, fish: 12, birds: 8, rabbits: 18, bears: 4, hunters: 0, vegetationHealth: 38, riverHealth: 42 });
   const [history, setHistory] = useState([]);
@@ -4382,15 +4382,26 @@ export default function Simulation() {
       const w = Math.floor(rect.width);
       const h = Math.floor(rect.height);
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      setCanvasSize({ w, h });
+      // World scale: small screens view the same desktop-proportioned world,
+      // uniformly scaled down — terrain, trees and animals shrink together
+      // instead of desktop-sized sprites crowding a tiny map.
+      const scale = clamp(h / 640, 0.45, 1.15);
+      const lw = Math.max(320, Math.round(w / scale));
+      const lh = Math.max(240, Math.round(h / scale));
+      setCanvasSize({ w, h, lw, lh });
       const canvas = canvasRef.current;
       if (canvas && ecoRef.current) {
-        // Render at device resolution for crisp HiDPI output;
-        // game logic stays in CSS pixels (eco.W / eco.H).
+        // Canvas rasterizes at device resolution; the renderer maps the
+        // logical world onto it (canvas.width / eco.W), covering HiDPI + zoom.
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
-        ecoRef.current.W = w;
-        ecoRef.current.H = h;
+        const eco = ecoRef.current;
+        eco.W = lw;
+        eco.H = lh;
+        for (const e of eco.entities) {
+          e.x = clamp(e.x, 8, lw - 8);
+          e.y = clamp(e.y, 8, lh - 8);
+        }
       }
     });
 
@@ -4422,7 +4433,7 @@ export default function Simulation() {
   // Init ecosystem when canvas size is known
   useEffect(() => {
     if (!ecoRef.current && canvasSize.w > 0) {
-      ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h, "noWolves");
+      ecoRef.current = initEcosystem(canvasSize.lw ?? canvasSize.w, canvasSize.lh ?? canvasSize.h, "noWolves");
       const ctx = canvasRef.current?.getContext("2d");
       if (ctx) renderEcosystem(ctx, ecoRef.current);
     }
@@ -4618,7 +4629,7 @@ export default function Simulation() {
     cancelAnimationFrame(animRef.current);
     setRunning(false);
     narrator.stop();
-    ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h, "noWolves");
+    ecoRef.current = initEcosystem(canvasSize.lw ?? canvasSize.w, canvasSize.lh ?? canvasSize.h, "noWolves");
     const eco = ecoRef.current;
     setStats(eco.stats);
     setHistory([]);
@@ -4644,7 +4655,7 @@ export default function Simulation() {
     cancelAnimationFrame(animRef.current);
     narrator.stop();
     // Initialize ecosystem with scenario-specific starting state
-    ecoRef.current = initScenarioEcosystem(canvasSize.w, canvasSize.h, scenario.id);
+    ecoRef.current = initScenarioEcosystem(canvasSize.lw ?? canvasSize.w, canvasSize.lh ?? canvasSize.h, scenario.id);
     const eco = ecoRef.current;
     eco.scenarioId = scenario.id; // stored on eco for rendering (e.g., tourism corridor)
 
@@ -4677,7 +4688,7 @@ export default function Simulation() {
     healthyStreakRef.current = 0;
 
     const mode = preset === "balanced" ? "balanced" : "noWolves";
-    ecoRef.current = initEcosystem(canvasSize.w, canvasSize.h, mode);
+    ecoRef.current = initEcosystem(canvasSize.lw ?? canvasSize.w, canvasSize.lh ?? canvasSize.h, mode);
     const eco = ecoRef.current;
     const { W: cw, H: ch } = eco;
 
