@@ -39,12 +39,20 @@ const TERRAIN = {
   mountainStartPct: 0.82,
 };
 
+// Meander curve — the river's centerline x at height y (deterministic).
+// Gives the channel real bends instead of a ruler-straight band.
+function riverXAt(W, y) {
+  const RX = W * TERRAIN.riverPct;
+  const amp = Math.min(26, W * 0.024);
+  return RX + Math.sin(y * 0.0052 + 1.2) * amp + Math.sin(y * 0.0161 + 4.0) * amp * 0.35;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENTITY FACTORY
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function createEntity(type, x, y, W, H) {
-  const RX = W * TERRAIN.riverPct;
+  const RX = riverXAt(W, y ?? H * 0.5);
   const base = {
     id: Math.random().toString(36).slice(2, 9),
     type, x: x ?? 0, y: y ?? 0, age: 0, energy: 100, alive: true,
@@ -398,7 +406,7 @@ function updateTree(tree, eco) {
 
 function updateBeaver(b, eco) {
   b.energy -= 0.05;
-  const RX = eco.W * TERRAIN.riverPct;
+  const RX = riverXAt(eco.W, b.y);
   const nearRiver = Math.abs(b.x - RX) < 40;
   if (Math.abs(b.x - RX) > 60) moveToward(b, RX + rand(-25, 25), b.y + rand(-30, 30), b.speed);
   else wander(b, eco.W, eco.H);
@@ -465,7 +473,7 @@ function updateCoyote(c, eco) {
 
 function updateFish(f, eco) {
   f.energy -= 0.04;
-  const RX = eco.W * TERRAIN.riverPct;
+  const RX = riverXAt(eco.W, f.y);
   const rw = eco.riverWidth;
   f.x = clamp(f.x + rand(-1.2, 1.2), RX - rw / 2 + 3, RX + rw / 2 - 3);
   f.y = clamp(f.y + rand(-1.8, 1.8), 5, eco.H - 5);
@@ -868,7 +876,7 @@ function buildTerrainLayer(W, H, dpr, vf, rh, RX, MX, scaledRW) {
   baseGrad.addColorStop(0.7, lerpColor("#355e28", "#4e9038", vf));
   baseGrad.addColorStop(1, lerpColor("#2a4a1e", "#3d7030", vf));
   ctx.fillStyle = baseGrad;
-  ctx.fillRect(0, 0, RX - scaledRW / 2, H);
+  ctx.fillRect(0, 0, RX + scaledRW, H);  // overdraw under the channel — river paints on top
 
   // Forest side — DARKER, BLUER conifer canopy floor (visible distinction from meadow)
   const forestGrad = ctx.createLinearGradient(RX + scaledRW / 2, 0, MX, 0);
@@ -876,11 +884,11 @@ function buildTerrainLayer(W, H, dpr, vf, rh, RX, MX, scaledRW) {
   forestGrad.addColorStop(0.5, lerpColor("#0f2a14", "#1a4220", vf)); // deepest canopy
   forestGrad.addColorStop(1, lerpColor("#15321a", "#214d28", vf));   // softer toward mountains
   ctx.fillStyle = forestGrad;
-  ctx.fillRect(RX + scaledRW / 2, 0, MX - RX - scaledRW / 2, H);
+  ctx.fillRect(RX - scaledRW, 0, MX - RX + scaledRW, H);
 
   // Background conifer silhouettes scattered across forest side — fills emptiness
   // These are NOT entities, just decorative background trees giving the forest density.
-  const forestStart = RX + scaledRW / 2 + 12;
+  const forestStart = RX + scaledRW / 2 + 34;
   const forestEnd = MX - 8;
   const forestArea = forestEnd - forestStart;
   if (forestArea > 0) {
@@ -919,7 +927,7 @@ function buildTerrainLayer(W, H, dpr, vf, rh, RX, MX, scaledRW) {
   // ─── Perlin noise terrain texture (FULL canvas, visible) ──────────────
   // Meadow noise — creates patches of lighter/darker grass, dirt
   const noiseStep = 6;
-  for (let x = 0; x < RX - scaledRW / 2; x += noiseStep) {
+  for (let x = 0; x < RX + scaledRW; x += noiseStep) {
     for (let y = 0; y < H; y += noiseStep) {
       const nv = noise2d(x, y, 60);
       const nv2 = noise2d(x + 500, y + 300, 30); // second octave for detail
@@ -948,7 +956,7 @@ function buildTerrainLayer(W, H, dpr, vf, rh, RX, MX, scaledRW) {
   ctx.globalAlpha = 1;
 
   // Large-scale rolling shade — soft valleys and rises across the meadow
-  for (let x = 0; x < RX - scaledRW / 2; x += 12) {
+  for (let x = 0; x < RX + scaledRW; x += 12) {
     for (let y = 0; y < H; y += 12) {
       const rv = noise2d(x + 900, y + 700, 150);
       if (rv < 0.42) {
@@ -962,7 +970,7 @@ function buildTerrainLayer(W, H, dpr, vf, rh, RX, MX, scaledRW) {
   }
 
   // Forest floor noise — darker, with needle/leaf litter feel
-  for (let x = Math.floor(RX + scaledRW / 2); x < MX; x += noiseStep) {
+  for (let x = Math.floor(RX - scaledRW); x < MX; x += noiseStep) {
     for (let y = 0; y < H; y += noiseStep) {
       const nv = noise2d(x + 200, y + 100, 45);
       if (nv < 0.35) {
@@ -1084,7 +1092,7 @@ function buildTerrainLayer(W, H, dpr, vf, rh, RX, MX, scaledRW) {
   if (vf > 0.15) {
     const flowerColors = ["#dc2626", "#facc15", "#8b5cf6", "#ec4899", "#f97316", "#f8fafc"];
     for (let i = 0; i < Math.floor(180 * vf); i++) {
-      const fx = (i * 191.23 + 13) % (RX - scaledRW / 2 - 20) + 10;
+      const fx = (i * 191.23 + 13) % (RX - scaledRW / 2 - 34) + 10;
       const fy = (i * 137.891 + 7) % (H - 20) + 10;
       const nv = noise2d(fx, fy, 80);
       if (nv < 0.35) continue;
@@ -1127,56 +1135,83 @@ function buildTerrainLayer(W, H, dpr, vf, rh, RX, MX, scaledRW) {
   for (let i = 0; i < 45; i++) {
     const rx = (i * 277.13 + 31) % (W * 0.78) + 10;
     const ry = (i * 193.47 + 50) % (H - 20) + 10;
-    if (Math.abs(rx - RX) < scaledRW / 2 + 10) continue;
+    if (Math.abs(rx - RX) < scaledRW / 2 + 38) continue;
     const sz = 1.5 + Math.sin(i * 7.3) * 1.5;
     ctx.beginPath();
     ctx.ellipse(rx, ry, sz * 1.3, sz, i * 0.7, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Muddy banks (gradient transition from ground to water)
-  const bankW = scaledRW * 0.4;
-  const leftBankGrad = ctx.createLinearGradient(RX - scaledRW / 2 - bankW, 0, RX - scaledRW / 2, 0);
-  leftBankGrad.addColorStop(0, "transparent");
-  leftBankGrad.addColorStop(0.5, "rgba(80, 65, 40, 0.25)");
-  leftBankGrad.addColorStop(1, "rgba(60, 50, 30, 0.4)");
-  ctx.fillStyle = leftBankGrad;
-  ctx.fillRect(RX - scaledRW / 2 - bankW, 0, bankW, H);
-
-  const rightBankGrad = ctx.createLinearGradient(RX + scaledRW / 2, 0, RX + scaledRW / 2 + bankW, 0);
-  rightBankGrad.addColorStop(0, "rgba(60, 50, 30, 0.4)");
-  rightBankGrad.addColorStop(0.5, "rgba(80, 65, 40, 0.25)");
-  rightBankGrad.addColorStop(1, "transparent");
-  ctx.fillStyle = rightBankGrad;
-  ctx.fillRect(RX + scaledRW / 2, 0, bankW, H);
-
-  // River water — natural-looking gradient (darker, more depth)
-  // Real Yellowstone river: deep teal-blue with darker shadow channels along banks
-  const waterDeep   = rh > 60 ? "#0d3a5c" : rh > 30 ? "#1a4a60" : "#5a4030";  // deep channel
-  const waterMid    = rh > 60 ? "#1e5680" : rh > 30 ? "#2c5d75" : "#6e5040";  // mid depth
-  const waterShallow = rh > 60 ? "#3a7ea0" : rh > 30 ? "#4a7e95" : "#8e6850"; // sunlit shallows
-  const riverGrad = ctx.createLinearGradient(RX - scaledRW / 2, 0, RX + scaledRW / 2, 0);
-  riverGrad.addColorStop(0, "#1a2a1a");           // muddy bank shadow
-  riverGrad.addColorStop(0.08, waterDeep);
-  riverGrad.addColorStop(0.35, waterMid);
-  riverGrad.addColorStop(0.5, waterShallow);
-  riverGrad.addColorStop(0.65, waterMid);
-  riverGrad.addColorStop(0.92, waterDeep);
-  riverGrad.addColorStop(1, "#1a2a1a");
-  ctx.fillStyle = riverGrad;
-  ctx.fillRect(RX - scaledRW / 2, 0, scaledRW, H);
-
-  // River stones along banks
-  ctx.fillStyle = "rgba(80, 90, 85, 0.35)";
-  for (let i = 0; i < 30; i++) {
-    const sy = (i * 127.1 + 20) % H;
-    const leftS = RX - scaledRW / 2 - 4 + Math.sin(i * 5.3) * 3;
-    const rightS = RX + scaledRW / 2 + 4 + Math.sin(i * 3.7) * 3;
-    const sz = 2 + Math.sin(i * 2.1) * 1.5;
-    ctx.beginPath(); ctx.ellipse(leftS, sy, sz, sz * 0.7, i * 0.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(rightS, sy, sz, sz * 0.7, i * 0.3, 0, Math.PI * 2); ctx.fill();
+  // ─── RIVER — meandering channel with wet banks and gravel ─────────────
+  const bankW = scaledRW * 0.5;
+  for (const side of [-1, 1]) {
+    ctx.strokeStyle = "rgba(62, 50, 30, 0.38)";
+    ctx.lineWidth = bankW;
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let y = -8; y <= H + 8; y += 6) {
+      const cx = riverXAt(W, y) + side * (scaledRW / 2 + bankW * 0.32);
+      if (y === -8) ctx.moveTo(cx, y); else ctx.lineTo(cx, y);
+    }
+    ctx.stroke();
   }
-
+  // gravel speckles along both banks
+  const gravelShades = ["rgba(150,140,120,0.5)", "rgba(110,100,85,0.5)", "rgba(180,170,150,0.45)"];
+  for (let i = 0; i < 130; i++) {
+    const gy = (i * 61.7 + 9) % H;
+    const side = i % 2 === 0 ? -1 : 1;
+    const off = scaledRW / 2 + 2 + ((i * 13.3) % (bankW * 0.9));
+    const gx = riverXAt(W, gy) + side * off;
+    const gs = 0.6 + ((i * 7) % 10) / 9;
+    ctx.fillStyle = gravelShades[i % 3];
+    ctx.beginPath();
+    ctx.ellipse(gx, gy, gs * 1.3, gs, i * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // water — channel filled between the curved banks
+  const waterDeep   = rh > 60 ? "#0d3a5c" : rh > 30 ? "#1a4a60" : "#5a4030";
+  const waterMid    = rh > 60 ? "#1e5680" : rh > 30 ? "#2c5d75" : "#6e5040";
+  const waterShallow = rh > 60 ? "#3a7ea0" : rh > 30 ? "#4a7e95" : "#8e6850";
+  ctx.fillStyle = waterMid;
+  ctx.beginPath();
+  for (let y = -8; y <= H + 8; y += 5) {
+    const cx = riverXAt(W, y) - scaledRW / 2;
+    if (y === -8) ctx.moveTo(cx, y); else ctx.lineTo(cx, y);
+  }
+  for (let y = H + 8; y >= -8; y -= 5) {
+    ctx.lineTo(riverXAt(W, y) + scaledRW / 2, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  // depth shading — dark channels along each bank, sunlit spine down the middle
+  ctx.strokeStyle = waterDeep;
+  ctx.lineWidth = scaledRW * 0.34;
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    for (let y = -8; y <= H + 8; y += 6) {
+      const cx = riverXAt(W, y) + side * scaledRW * 0.31;
+      if (y === -8) ctx.moveTo(cx, y); else ctx.lineTo(cx, y);
+    }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = waterShallow;
+  ctx.lineWidth = scaledRW * 0.22;
+  ctx.beginPath();
+  for (let y = -8; y <= H + 8; y += 6) {
+    const cx = riverXAt(W, y);
+    if (y === -8) ctx.moveTo(cx, y); else ctx.lineTo(cx, y);
+  }
+  ctx.stroke();
+  // river stones hugging the curved banks
+  ctx.fillStyle = "rgba(80, 90, 85, 0.4)";
+  for (let i = 0; i < 34; i++) {
+    const sy = (i * 127.1 + 20) % H;
+    const cx = riverXAt(W, sy);
+    const off = scaledRW / 2 + 3 + Math.sin(i * 5.3) * 2.5;
+    const sz = 1.6 + Math.sin(i * 2.1) * 1.3;
+    ctx.beginPath(); ctx.ellipse(cx - off, sy, sz, sz * 0.7, i * 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + off, sy, sz, sz * 0.7, i * 0.3, 0, Math.PI * 2); ctx.fill();
+  }
 
   return cv;
 }
@@ -1267,7 +1302,7 @@ function renderEcosystem(ctx, eco) {
       const amp = scaledRW * 0.10 * (1 - layer * 0.18);
       // Smoother wave with fewer points
       for (let dy = 0; dy < 14; dy += 3.5) {
-        const cx = RX + Math.sin(phase + dy * 0.3) * amp;
+        const cx = riverXAt(W, y + dy) + Math.sin(phase + dy * 0.3) * amp;
         if (dy === 0) ctx.moveTo(cx, y + dy);
         else ctx.lineTo(cx, y + dy);
       }
@@ -1278,8 +1313,8 @@ function renderEcosystem(ctx, eco) {
   // Caustic light highlights — bright moving spots on water surface
   for (let i = 0; i < 24; i++) {
     const causticPhase = tick * 0.018 + i * 1.7;
-    const sx = RX + Math.sin(causticPhase) * scaledRW * 0.32;
     const sy = ((tick * 0.6 + i * H / 24) % (H + 30)) - 15;
+    const sx = riverXAt(W, sy) + Math.sin(causticPhase) * scaledRW * 0.32;
     const intensity = (Math.sin(causticPhase * 1.7) * 0.5 + 0.5);
     ctx.fillStyle = `rgba(220, 240, 255, ${(0.10 + rh * 0.002) * intensity})`;
     ctx.beginPath();
@@ -1290,8 +1325,8 @@ function renderEcosystem(ctx, eco) {
   // Surface shimmer flecks (sparkle)
   ctx.fillStyle = `rgba(255, 255, 255, ${0.08 + rh * 0.002})`;
   for (let i = 0; i < 18; i++) {
-    const sx = RX + Math.sin(tick * 0.025 + i * 2.3) * scaledRW * 0.35;
     const sy = (tick * 0.45 + i * H / 18) % H;
+    const sx = riverXAt(W, sy) + Math.sin(tick * 0.025 + i * 2.3) * scaledRW * 0.35;
     const sparkle = (Math.sin(tick * 0.08 + i) * 0.5 + 0.5);
     if (sparkle > 0.7) {
       ctx.beginPath();
@@ -1303,10 +1338,38 @@ function renderEcosystem(ctx, eco) {
   // Foam at edges
   ctx.fillStyle = `rgba(255, 255, 255, ${0.15 + rh * 0.002})`;
   for (let y = 0; y < H; y += 8) {
-    const foamX1 = RX - scaledRW / 2 + Math.sin(tick * 0.04 + y * 0.03) * 2;
-    const foamX2 = RX + scaledRW / 2 + Math.sin(tick * 0.04 + y * 0.03 + 1) * 2;
+    const foamX1 = riverXAt(W, y) - scaledRW / 2 + Math.sin(tick * 0.04 + y * 0.03) * 2;
+    const foamX2 = riverXAt(W, y) + scaledRW / 2 + Math.sin(tick * 0.04 + y * 0.03 + 1) * 2;
     ctx.fillRect(foamX1 - 1, y, 2, 1.5);
     ctx.fillRect(foamX2 - 1, y, 2, 1.5);
+  }
+
+  // ─── CATTAILS swaying along the banks ─────────────────────────────────
+  for (let ct = 0; ct < 26; ct++) {
+    const cy = (ct * 83.7 + 12) % H;
+    const side = ct % 2 === 0 ? -1 : 1;
+    const cx = riverXAt(W, cy) + side * (scaledRW / 2 + 3 + ((ct * 11) % 7));
+    if (cx > MX - 12) continue;
+    const reedSway = Math.sin(tick * 0.015 + ct * 1.9) * 2.2;
+    const hgt = 9 + (ct * 5) % 6;
+    ctx.strokeStyle = ct % 3 === 0 ? "#4d7c3a" : "#5d8c46";
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.quadraticCurveTo(cx + reedSway * 0.4, cy - hgt * 0.6, cx + reedSway, cy - hgt);
+    ctx.moveTo(cx - 1.5, cy);
+    ctx.quadraticCurveTo(cx - 1.5 + reedSway * 0.3, cy - hgt * 0.45, cx - 2.5 + reedSway * 0.8, cy - hgt * 0.75);
+    ctx.stroke();
+    if (ct % 2 === 0) {
+      ctx.fillStyle = "#6b4423";
+      ctx.save();
+      ctx.translate(cx + reedSway * 0.85, cy - hgt + 1.5);
+      ctx.rotate(reedSway * 0.06);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 1.1, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   // ─── Grass blades with animation ──────────────────────────────────────
@@ -1320,7 +1383,7 @@ function renderEcosystem(ctx, eco) {
     for (let i = 0; i < Math.floor(200 * vf); i++) {
       const gx = (i * 97.508 + 7) % (W * 0.78) + 10;
       const gy = (i * 73.33 + 11) % (H - 20) + 10;
-      if (Math.abs(gx - RX) < scaledRW / 2 + 12) continue;
+      if (Math.abs(gx - riverXAt(W, gy)) < scaledRW / 2 + 10) continue;
       if (gx > MX - 10) continue;
       ctx.strokeStyle = grassColors[i % 3];
       ctx.lineWidth = 0.6 + Math.sin(i * 1.3) * 0.3;
@@ -1373,7 +1436,7 @@ function renderEcosystem(ctx, eco) {
 
     // Snow on meadow side (avoid river)
     ctx.fillStyle = `rgba(245, 250, 255, ${snowAlpha})`;
-    ctx.fillRect(0, 0, RX - scaledRW / 2, H);
+    ctx.fillRect(0, 0, RX - scaledRW / 2 - 28, H);
 
     // Snow patches — bright white on top of noise texture for depth
     ctx.fillStyle = `rgba(255, 255, 255, ${snowAlpha * 0.5})`;
@@ -1389,7 +1452,7 @@ function renderEcosystem(ctx, eco) {
 
     // Snow on forest floor (between river and mountains)
     ctx.fillStyle = `rgba(245, 250, 255, ${snowAlpha * 0.7})`;
-    ctx.fillRect(RX + scaledRW / 2, 0, MX - RX - scaledRW / 2, H);
+    ctx.fillRect(RX + scaledRW / 2 + 28, 0, MX - RX - scaledRW / 2 - 28, H);
 
     // Falling snow particles drifting diagonally
     if (snowAlpha > 0.2) {
@@ -1411,7 +1474,7 @@ function renderEcosystem(ctx, eco) {
     // Ramps up through early autumn, peaks mid, fades into snow in late autumn
     const autumnAlpha = seasonT < 0.5 ? seasonT * 0.4 : (1 - seasonT) * 0.4;
     ctx.fillStyle = `rgba(200, 140, 60, ${autumnAlpha})`;
-    ctx.fillRect(0, 0, RX - scaledRW / 2, H);
+    ctx.fillRect(0, 0, RX - scaledRW / 2 - 28, H);
   }
 
   // ─── AUTUMN LEAVES — drifting on the valley breeze ────────────────────
@@ -1630,6 +1693,33 @@ function renderEcosystem(ctx, eco) {
   ctx.fillStyle = botFog;
   ctx.fillRect(0, H * 0.92, W, H * 0.08);
 
+  // ─── GOD RAYS — soft diagonal light shafts drifting over the valley ───
+  ctx.save();
+  ctx.globalCompositeOperation = "soft-light";
+  ctx.transform(1, 0, -0.32, 1, H * 0.32, 0);
+  for (let gi = 0; gi < 3; gi++) {
+    const gw = W * (0.09 + gi * 0.03);
+    const gx = ((tick * (0.10 + gi * 0.04) + gi * W * 0.33) % (W + gw * 3)) - gw * 1.5;
+    const gg = ctx.createLinearGradient(gx, 0, gx + gw, 0);
+    gg.addColorStop(0, "rgba(255, 236, 190, 0)");
+    gg.addColorStop(0.5, "rgba(255, 236, 190, 0.55)");
+    gg.addColorStop(1, "rgba(255, 236, 190, 0)");
+    ctx.fillStyle = gg;
+    ctx.fillRect(gx, -H * 0.2, gw, H * 1.4);
+  }
+  ctx.restore();
+
+  // ─── FILMIC GRADE — warm key light, cool shadow corners (soft-light) ──
+  ctx.save();
+  ctx.globalCompositeOperation = "soft-light";
+  const grade = ctx.createRadialGradient(W * 0.42, H * 0.36, 0, W * 0.42, H * 0.36, Math.max(W, H) * 0.8);
+  grade.addColorStop(0, "rgba(255, 216, 150, 0.5)");
+  grade.addColorStop(0.55, "rgba(128, 128, 128, 0)");
+  grade.addColorStop(1, "rgba(45, 65, 115, 0.45)");
+  ctx.fillStyle = grade;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
   // ─── Per-scenario palette tint (mood overlay) ─────────────────────────
   if (scenarioOverlay) {
     ctx.fillStyle = scenarioOverlay;
@@ -1662,6 +1752,29 @@ function softShadow(ctx, x, y, rx, ry, a = 0.3) {
   ctx.arc(0, 0, rx, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
+}
+
+// Articulated quadruped leg: hip → knee → foot driven by a gait phase.
+// amp scales stride length (walk vs run). Draws limb + hoof/paw.
+function drawLeg(ctx, hipX, hipY, phase, len, amp, color, hoofColor, thick) {
+  const swing = Math.sin(phase) * amp;
+  const lift = Math.max(0, Math.sin(phase + Math.PI / 2)) * amp;
+  const kneeX = hipX + swing * len * 0.32;
+  const kneeY = hipY + len * 0.52 - lift * len * 0.10;
+  const footX = hipX + swing * len * 0.62;
+  const footY = hipY + len - lift * len * 0.30;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = thick;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(hipX, hipY);
+  ctx.quadraticCurveTo(kneeX, kneeY, footX, footY);
+  ctx.stroke();
+  ctx.fillStyle = hoofColor;
+  ctx.beginPath();
+  ctx.ellipse(footX + 0.4, footY + 0.2, thick * 0.62, thick * 0.45, 0, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawTree(ctx, tree, vf, tick, season) {
@@ -1706,32 +1819,30 @@ function drawTree(ctx, tree, vf, tick, season) {
     // Pointed conifer canopy
     const baseGreen = healthy ? lerpColor("#166534", "#22c55e", s * vf) : lerpColor("#854d0e", "#a16207", s);
 
-    // Bottom canopy layer
-    ctx.fillStyle = lerpColor(baseGreen, "#0f3f1f", 0.3);
+    // Layered fronds with drooping tips — reads as a real spruce
+    for (let tier = 0; tier < 4; tier++) {
+      const tT = tier / 3;
+      const fw = w * (0.2 + tT * 0.34);
+      const fy = tree.y - h * (0.66 - tT * 0.34);
+      const fh = h * 0.16;
+      const tipX = tree.x + sway * (1 - tT * 0.5);
+      ctx.fillStyle = lerpColor(lerpColor(baseGreen, "#4ade80", 0.28 * (1 - tT)), "#0f3f1f", tT * 0.35);
+      ctx.beginPath();
+      ctx.moveTo(tipX, fy - fh);
+      ctx.quadraticCurveTo(tree.x + sway - fw * 0.5, fy - fh * 0.2, tree.x + sway - fw, fy + fh * 0.55);
+      ctx.quadraticCurveTo(tree.x + sway - fw * 0.45, fy + fh * 0.28, tree.x + sway, fy + fh * 0.34);
+      ctx.quadraticCurveTo(tree.x + sway + fw * 0.45, fy + fh * 0.28, tree.x + sway + fw, fy + fh * 0.55);
+      ctx.quadraticCurveTo(tree.x + sway + fw * 0.5, fy - fh * 0.2, tipX, fy - fh);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // rim light on the sunlit edge
+    ctx.strokeStyle = `rgba(190, 240, 190, ${0.28 * vf})`;
+    ctx.lineWidth = 0.8;
     ctx.beginPath();
-    ctx.moveTo(tree.x + sway, tree.y - h * 0.38);
-    ctx.lineTo(tree.x + sway - w * 0.45, tree.y + 2);
-    ctx.lineTo(tree.x + sway + w * 0.45, tree.y + 2);
-    ctx.closePath();
-    ctx.fill();
-
-    // Middle canopy
-    ctx.fillStyle = baseGreen;
-    ctx.beginPath();
-    ctx.moveTo(tree.x + sway, tree.y - h * 0.5);
-    ctx.lineTo(tree.x + sway - w * 0.35, tree.y - 3);
-    ctx.lineTo(tree.x + sway + w * 0.35, tree.y - 3);
-    ctx.closePath();
-    ctx.fill();
-
-    // Top canopy point
-    ctx.fillStyle = lerpColor(baseGreen, "#4ade80", 0.3);
-    ctx.beginPath();
-    ctx.moveTo(tree.x + sway, tree.y - h * 0.62);
-    ctx.lineTo(tree.x + sway - w * 0.22, tree.y - h * 0.4);
-    ctx.lineTo(tree.x + sway + w * 0.22, tree.y - h * 0.4);
-    ctx.closePath();
-    ctx.fill();
+    ctx.moveTo(tree.x + sway, tree.y - h * 0.68);
+    ctx.lineTo(tree.x + sway - w * 0.4, tree.y - h * 0.1);
+    ctx.stroke();
 
     // WINTER: snow dusting on conifer branches
     if (seasonIdx === 3 && s > 0.3) {
@@ -1811,23 +1922,32 @@ function drawTree(ctx, tree, vf, tick, season) {
         darkGreen = healthy ? lerpColor("#14532d", "#166534", s * vf) : lerpColor("#713f12", "#854d0e", s);
       }
 
-      // Bottom canopy layer
-      ctx.fillStyle = darkGreen;
+      // Clustered 5-lobe canopy — organic mass, lit from upper-left
+      const lobes = [
+        { dx: 0, dy: -0.5, r: 0.55, c: 0.18 },
+        { dx: -0.4, dy: -0.4, r: 0.42, c: 0.32 },
+        { dx: 0.42, dy: -0.43, r: 0.44, c: 0.05 },
+        { dx: -0.18, dy: -0.62, r: 0.38, c: 0.48 },
+        { dx: 0.22, dy: -0.6, r: 0.36, c: 0.32 },
+      ];
+      for (let li = 0; li < lobes.length; li++) {
+        const L = lobes[(li + idHash) % lobes.length];
+        const jx = ((idHash * 7 + li * 13) % 10 - 5) * 0.04;
+        ctx.fillStyle = lerpColor(darkGreen, baseGreen, L.c + 0.15);
+        ctx.beginPath();
+        ctx.ellipse(tree.x + sway + (L.dx + jx) * w, tree.y + L.dy * h, w * L.r + 1.5, h * L.r * 0.72, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // sunlit crown lobe
+      const topTint = seasonIdx === 2 ? "#fcd34d" : "#7ee2a0";
+      ctx.fillStyle = lerpColor(baseGreen, topTint, 0.35);
       ctx.beginPath();
-      ctx.ellipse(tree.x + sway, tree.y - h * 0.35, w / 2 + 2, h * 0.4, 0, 0, Math.PI * 2);
+      ctx.ellipse(tree.x + sway - w * 0.18, tree.y - h * 0.62, w * 0.3, h * 0.2, -0.3, 0, Math.PI * 2);
       ctx.fill();
-
-      // Middle canopy
-      ctx.fillStyle = baseGreen;
+      // dappled inner shadow for depth
+      ctx.fillStyle = "rgba(10, 30, 12, 0.25)";
       ctx.beginPath();
-      ctx.ellipse(tree.x + sway, tree.y - h * 0.48, w / 2 - 0.5, h * 0.35, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Top canopy
-      const topTint = seasonIdx === 2 ? "#fcd34d" : "#4ade80";
-      ctx.fillStyle = lerpColor(baseGreen, topTint, 0.2);
-      ctx.beginPath();
-      ctx.ellipse(tree.x + sway - 1, tree.y - h * 0.58, w / 2 - 2, h * 0.28, 0, 0, Math.PI * 2);
+      ctx.ellipse(tree.x + sway + w * 0.2, tree.y - h * 0.34, w * 0.34, h * 0.22, 0.3, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -1866,132 +1986,167 @@ function drawWolf(ctx, wolf, tick) {
   ctx.translate(wolf.x, wolf.y);
   ctx.scale(facing, 1);
 
-  const isRunning = wolf.state === "chase" || wolf.state === "flee";
-  const legPhase = isRunning ? Math.sin(wolf.age * 0.3) * 6 : Math.sin(wolf.age * 0.08) * 2.5;
+  const running = wolf.state === "chase" || wolf.state === "flee";
+  const gait = wolf.age * (running ? 0.42 : 0.13);
+  const amp = running ? 1 : 0.55;
+  const bodyBob = Math.sin(gait * 2) * (running ? 1.1 : 0.4);
+  const stretch = running ? 1.08 : 1;
 
-  // Shadow
-  softShadow(ctx, 0, 8, 12.5, 3.4, 0.34);
+  softShadow(ctx, 0, 10.5, 15, 3.6, 0.34);
 
-  // Tail - bushy
-  ctx.strokeStyle = "#8b7355";
-  ctx.lineWidth = 3.5;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(-9, -3);
-  ctx.quadraticCurveTo(-16, -12, -14, -18 + Math.sin(wolf.age * 0.1) * 2);
-  ctx.stroke();
+  // far-side legs (darker, behind body)
+  drawLeg(ctx, -8.5, 3.5, gait + Math.PI, 8.5, amp, "#3f4c5c", "#22262e", 2.2);
+  drawLeg(ctx, 7, 3.2, gait + Math.PI * 1.45, 8.8, amp, "#3f4c5c", "#22262e", 2.2);
 
-  // Fur outline
-  ctx.strokeStyle = "rgba(0,0,0,0.2)";
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.ellipse(0, -2, 11, 7, 0, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // Front legs (detailed)
-  ctx.strokeStyle = "#3d4a5c";
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(-5, 4); ctx.lineTo(-5 + legPhase, 11);
-  ctx.moveTo(2, 4); ctx.lineTo(2 - legPhase * 0.8, 11);
-  ctx.stroke();
-
-  // Hind legs
-  ctx.beginPath();
-  ctx.moveTo(-8, 3); ctx.lineTo(-8 + legPhase * 0.5, 10);
-  ctx.moveTo(5, 3); ctx.lineTo(5 - legPhase * 0.5, 10);
-  ctx.stroke();
-
-  // Paw prints trail when running
-  if (isRunning && wolf.age % 5 < 2) {
-    ctx.fillStyle = "rgba(0,0,0,0.1)";
+  // bushy tail — three tapered layers; streams back at speed
+  const tailBase = running ? 0.15 : -0.35;
+  const wag = Math.sin(wolf.age * 0.09) * (running ? 0.06 : 0.16);
+  const tailShades = ["#55636f", "#75828f", "#8d99a5"];
+  for (let t = 0; t < 3; t++) {
+    ctx.strokeStyle = tailShades[t];
+    ctx.lineWidth = 4.2 - t * 1.1;
+    ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.arc(-8 - legPhase * 2, 11, 1.2, 0, Math.PI * 2);
+    ctx.moveTo(-12 * stretch, -3);
+    ctx.quadraticCurveTo(-17 - t * 0.5, -3 + (tailBase + wag) * 14, -20 - t * 1.2, -1 + (tailBase + wag) * 26);
+    ctx.stroke();
+  }
+
+  // body — deep chest, tucked waist
+  const bodyGrad = ctx.createLinearGradient(0, -9, 0, 4);
+  bodyGrad.addColorStop(0, "#4e5a66");
+  bodyGrad.addColorStop(0.62, "#7f8c98");
+  bodyGrad.addColorStop(1, "#a9b4bf");
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.moveTo(-12 * stretch, -4 + bodyBob * 0.4);
+  ctx.bezierCurveTo(-9, -8 + bodyBob, -2, -8.6 + bodyBob, 3, -7.4 + bodyBob);
+  ctx.bezierCurveTo(6.5, -6.8, 9.5, -5.4, 10.5, -3.4);
+  ctx.bezierCurveTo(10.6, 0.2, 8.2, 2.3, 5.5, 2.9);
+  ctx.bezierCurveTo(1.5, 3.6, -2.5, 2.7, -5.5, 1.8);
+  ctx.bezierCurveTo(-9.5, 1.2, -12.5, -0.5, -12 * stretch, -4 + bodyBob * 0.4);
+  ctx.closePath();
+  ctx.fill();
+
+  // dark dorsal saddle
+  ctx.fillStyle = "rgba(46, 56, 68, 0.72)";
+  ctx.beginPath();
+  ctx.moveTo(-10, -5 + bodyBob * 0.6);
+  ctx.quadraticCurveTo(-2, -8.8 + bodyBob, 6, -6.6 + bodyBob * 0.5);
+  ctx.quadraticCurveTo(0, -4.5, -10, -5 + bodyBob * 0.6);
+  ctx.fill();
+
+  // rim light along the back
+  ctx.strokeStyle = "rgba(226, 236, 246, 0.5)";
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(-11, -5 + bodyBob * 0.5);
+  ctx.quadraticCurveTo(-2, -8.9 + bodyBob, 5.5, -7 + bodyBob * 0.5);
+  ctx.stroke();
+
+  // near-side legs
+  drawLeg(ctx, -7, 3.8, gait, 9.5, amp, "#5b6874", "#2b3038", 2.6);
+  drawLeg(ctx, 6, 3.6, gait + Math.PI * 0.45, 9.8, amp, "#5b6874", "#2b3038", 2.6);
+
+  // dust kicked up at speed
+  if (running && wolf.age % 5 < 2) {
+    ctx.fillStyle = "rgba(139, 117, 94, 0.3)";
+    ctx.beginPath();
+    ctx.arc(-13 - Math.sin(gait) * 3, 9, 2.2, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Body with gradient (darker back, lighter belly)
-  const bodyGrad = ctx.createLinearGradient(0, -6, 0, 2);
-  bodyGrad.addColorStop(0, "#5c6b7a");
-  bodyGrad.addColorStop(1, "#a8adb8");
-  ctx.fillStyle = bodyGrad;
+  // neck ruff + head
+  const headLift = running ? 1.5 : 0;
+  const hx = 12.5 + headLift, hy = -7.5 + headLift * 0.8 + bodyBob * 0.3;
+  ctx.fillStyle = "#78858f";
   ctx.beginPath();
-  ctx.ellipse(0, -2, 11, 6.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(9, -5 + bodyBob * 0.3, 4.4, 5.2, -0.5, 0, Math.PI * 2);
   ctx.fill();
-
-  // Lighter belly
-  ctx.fillStyle = "rgba(220, 220, 220, 0.3)";
+  ctx.fillStyle = "#828f9b";
   ctx.beginPath();
-  ctx.ellipse(0, 1, 7, 2.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(hx, hy, 4.6, 3.8, -0.15, 0, Math.PI * 2);
   ctx.fill();
-
-  // Head with detail
-  ctx.fillStyle = "#7a8592";
+  // muzzle wedge
+  ctx.fillStyle = "#9aa5b0";
   ctx.beginPath();
-  ctx.ellipse(10, -6, 5.5, 4.5, -0.2, 0, Math.PI * 2);
+  ctx.moveTo(hx + 2, hy - 2.2);
+  ctx.quadraticCurveTo(hx + 7.5, hy - 0.8, hx + 8.2, hy + 0.6);
+  ctx.lineTo(hx + 3.5, hy + 2.6);
+  ctx.quadraticCurveTo(hx + 2, hy + 1.5, hx + 2, hy - 2.2);
+  ctx.closePath();
   ctx.fill();
-
-  // Muzzle
-  ctx.fillStyle = "#c0c5d0";
+  // pale cheek/chin
+  ctx.fillStyle = "#c9d1d9";
   ctx.beginPath();
-  ctx.ellipse(14, -5, 3, 2.2, -0.1, 0, Math.PI * 2);
+  ctx.ellipse(hx + 2.2, hy + 1.8, 2.6, 1.5, 0.35, 0, Math.PI * 2);
   ctx.fill();
-
-  // Nose
-  ctx.fillStyle = "#2d2d2d";
+  // nose
+  ctx.fillStyle = "#1c1917";
   ctx.beginPath();
-  ctx.arc(15.5, -5, 0.8, 0, Math.PI * 2);
+  ctx.ellipse(hx + 7.8, hy + 0.4, 1.1, 0.9, 0.3, 0, Math.PI * 2);
   ctx.fill();
-
-  // Teeth when chasing
+  // open jaw + teeth when chasing
   if (wolf.state === "chase") {
-    ctx.fillStyle = "#f5f5f5";
-    ctx.fillRect(13.5, -4.5, 1.5, 0.8);
-    ctx.fillRect(15, -4.5, 1.5, 0.8);
+    ctx.fillStyle = "#7f1d1d";
+    ctx.beginPath();
+    ctx.moveTo(hx + 3.5, hy + 2.2);
+    ctx.lineTo(hx + 7.6, hy + 1.4);
+    ctx.lineTo(hx + 6.8, hy + 3.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#f5f5f4";
+    ctx.beginPath();
+    ctx.moveTo(hx + 4.2, hy + 2.15); ctx.lineTo(hx + 4.9, hy + 3.05); ctx.lineTo(hx + 5.5, hy + 2.0);
+    ctx.moveTo(hx + 5.9, hy + 1.9); ctx.lineTo(hx + 6.5, hy + 2.8); ctx.lineTo(hx + 7.0, hy + 1.7);
+    ctx.closePath();
+    ctx.fill();
   }
-
-  // Ears with inner color
-  ctx.fillStyle = "#5c6b7a";
+  // ears — pinned back in a chase
+  const earBack = wolf.state === "chase" ? 2.2 : 0;
+  ctx.fillStyle = "#5b6874";
   ctx.beginPath();
-  ctx.moveTo(8, -11); ctx.lineTo(6, -17); ctx.lineTo(4.5, -10); ctx.fill();
+  ctx.moveTo(hx - 3.5 - earBack, hy - 2.5);
+  ctx.lineTo(hx - 4.5 - earBack * 1.4, hy - 8.5 + earBack);
+  ctx.lineTo(hx - 0.8 - earBack, hy - 3.6);
+  ctx.closePath();
+  ctx.fill();
   ctx.beginPath();
-  ctx.moveTo(11, -11); ctx.lineTo(13.5, -17); ctx.lineTo(11.5, -10); ctx.fill();
-
-  // Inner ears
-  ctx.fillStyle = "#d0d0d0";
+  ctx.moveTo(hx - 0.5 - earBack * 0.6, hy - 3.4);
+  ctx.lineTo(hx + 0.8 - earBack, hy - 8.8 + earBack);
+  ctx.lineTo(hx + 2.6, hy - 3.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#cbd5df";
   ctx.beginPath();
-  ctx.moveTo(8, -11); ctx.lineTo(6.5, -14); ctx.lineTo(5.5, -10); ctx.fill();
+  ctx.moveTo(hx - 3.2 - earBack, hy - 3.2);
+  ctx.lineTo(hx - 3.9 - earBack * 1.3, hy - 6.8 + earBack);
+  ctx.lineTo(hx - 1.6 - earBack, hy - 3.8);
+  ctx.closePath();
+  ctx.fill();
+  // amber eye
+  ctx.fillStyle = "#fbbf24";
   ctx.beginPath();
-  ctx.moveTo(11, -11); ctx.lineTo(12.5, -14); ctx.lineTo(11.5, -10); ctx.fill();
-
-  // Eye - glowing amber
-  ctx.fillStyle = "#fcd34d";
-  ctx.beginPath();
-  ctx.arc(12, -7, 1.6, 0, Math.PI * 2);
+  ctx.ellipse(hx + 1.2, hy - 1.4, 1.35, 1.1, -0.2, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#1c1917";
   ctx.beginPath();
-  ctx.arc(12.3, -7, 0.8, 0, Math.PI * 2);
+  ctx.arc(hx + 1.6, hy - 1.4, 0.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.beginPath();
+  ctx.arc(hx + 1.0, hy - 1.8, 0.32, 0, Math.PI * 2);
   ctx.fill();
 
-  // Glow around eye
-  ctx.strokeStyle = "rgba(252, 211, 77, 0.4)";
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.arc(12, -7, 2.2, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // State indicator
+  // chase pulse indicator (kept)
   if (wolf.state === "chase") {
     ctx.fillStyle = "rgba(239, 68, 68, 0.7)";
     ctx.beginPath();
-    ctx.arc(0, -16, 3.5, 0, Math.PI * 2);
+    ctx.arc(0, -18, 3.5, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Howl indicator — when wolf is idle and has other wolves nearby
-  // Shown via a subtle crescent arc rising from the nose during wander state
+  // howl rings (kept)
   if (wolf.state === "wander" && wolf.howling) {
     const howlPhase = Math.sin(wolf.age * 0.04) * 0.5 + 0.5;
     ctx.strokeStyle = `rgba(226, 232, 240, ${0.55 * howlPhase})`;
@@ -1999,7 +2154,7 @@ function drawWolf(ctx, wolf, tick) {
     for (let ring = 0; ring < 3; ring++) {
       const r = 6 + ring * 4 + howlPhase * 3;
       ctx.beginPath();
-      ctx.arc(18, -10, r, -Math.PI * 0.85, -Math.PI * 0.35);
+      ctx.arc(hx + 6, hy - 3, r, -Math.PI * 0.85, -Math.PI * 0.35);
       ctx.stroke();
     }
   }
@@ -2010,251 +2165,241 @@ function drawElk(ctx, elk, tick) {
   ctx.translate(elk.x, elk.y);
   ctx.scale(facing, 1);
 
-  const isRunning = elk.state === "flee";
-  const lp = isRunning ? Math.sin(elk.age * 0.3) * 7 : Math.sin(elk.age * 0.06) * 2.5;
+  const running = elk.state === "flee";
+  const grazing = elk.state === "graze";
+  const gait = elk.age * (running ? 0.4 : 0.1);
+  const amp = running ? 1 : 0.5;
+  const bob = Math.sin(gait * 2) * (running ? 1.2 : 0.35);
 
-  // Shadow — stronger, elongated for profile grounding
-  softShadow(ctx, 0, 12, 16, 3.1, 0.38);
+  softShadow(ctx, 0, 13.5, 18, 3.6, 0.38);
 
-  // Legs with hooves
-  ctx.strokeStyle = "#5a3818";
-  ctx.lineWidth = 2.8;
-  ctx.lineCap = "round";
+  // far legs
+  drawLeg(ctx, -9.5, 4.5, gait + Math.PI, 10.5, amp, "#6b4a26", "#241a10", 2.4);
+  drawLeg(ctx, 8, 4.2, gait + Math.PI * 1.45, 10.8, amp, "#6b4a26", "#241a10", 2.4);
+
+  // cream rump patch — signature elk marking
+  ctx.fillStyle = "#e8d9b5";
   ctx.beginPath();
-  ctx.moveTo(-7, 3); ctx.lineTo(-7 + lp, 12);
-  ctx.moveTo(-2, 3); ctx.lineTo(-2 - lp * 0.6, 12);
-  ctx.moveTo(4, 3); ctx.lineTo(4 + lp * 0.6, 12);
-  ctx.moveTo(9, 3); ctx.lineTo(9 - lp * 0.4, 12);
+  ctx.ellipse(-12.5, -2.5 + bob * 0.4, 4.2, 5.2, 0.25, 0, Math.PI * 2);
+  ctx.fill();
+
+  // body — barrel, shoulder hump, sloped rump
+  const bodyGrad = ctx.createLinearGradient(0, -9, 0, 6);
+  bodyGrad.addColorStop(0, "#9a6b35");
+  bodyGrad.addColorStop(0.6, "#b08347");
+  bodyGrad.addColorStop(1, "#8a6032");
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.moveTo(-13, -2 + bob * 0.4);
+  ctx.bezierCurveTo(-12, -7.5 + bob, -6, -9 + bob, 0, -8.6 + bob);
+  ctx.bezierCurveTo(4, -8.4 + bob, 7, -9.6 + bob, 9.5, -7.8 + bob);
+  ctx.bezierCurveTo(12, -5.5, 12.5, -0.5, 10.5, 2.8);
+  ctx.bezierCurveTo(6, 5.6, -3, 5.8, -8, 4.4);
+  ctx.bezierCurveTo(-11.5, 3.2, -13.5, 1.5, -13, -2 + bob * 0.4);
+  ctx.closePath();
+  ctx.fill();
+
+  // rim light on back
+  ctx.strokeStyle = "rgba(245, 226, 188, 0.5)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-12, -4.5 + bob * 0.5);
+  ctx.quadraticCurveTo(-2, -9.3 + bob, 8.5, -8.2 + bob * 0.6);
   ctx.stroke();
 
-  // Hooves — dark definition
-  ctx.fillStyle = "#1c1917";
-  [-7 + lp, -2 - lp * 0.6, 4 + lp * 0.6, 9 - lp * 0.4].forEach((hx) => {
-    ctx.beginPath();
-    ctx.ellipse(hx, 12.2, 1.4, 1.0, 0, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  // near legs
+  drawLeg(ctx, -8, 5, gait, 11.5, amp, "#7a5228", "#2b1f12", 2.8);
+  drawLeg(ctx, 7, 4.8, gait + Math.PI * 0.45, 11.8, amp, "#7a5228", "#2b1f12", 2.8);
 
-  // Dust particles when fleeing
-  if (isRunning && elk.age % 4 < 2) {
+  // dust when fleeing
+  if (running && elk.age % 4 < 2) {
     ctx.fillStyle = "rgba(139, 117, 94, 0.35)";
     ctx.beginPath();
-    ctx.arc(-10 - lp, 8, 2.5, 0, Math.PI * 2);
+    ctx.arc(-14 - Math.sin(gait) * 3, 11, 2.6, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Tail — short, visible from side
-  ctx.fillStyle = "#5a3818";
-  ctx.beginPath();
-  ctx.ellipse(-13, -3, 1.5, 2.5, 0, 0, Math.PI * 2);
-  ctx.fill();
+  // neck + head — raised normally, LOWERED to the grass when grazing
+  const p = grazing ? (0.55 + Math.sin(elk.age * 0.05) * 0.45) : 0;
+  const nx = 12.5 + p * 1.0, ny = -13 + p * 10;
+  const hx = 16 + p * 1.5, hy = -16.5 + p * 23;
 
-  // Body — elongated profile (longer than tall for a proper side view)
-  const bodyGrad = ctx.createLinearGradient(0, -7, 0, 4);
-  bodyGrad.addColorStop(0, "#b07238");   // warm back
-  bodyGrad.addColorStop(0.5, "#a06530");
-  bodyGrad.addColorStop(1, "#7a5028");   // darker underbelly edge
-  ctx.fillStyle = bodyGrad;
+  // neck — dark brown mane (elk two-tone)
+  ctx.strokeStyle = "#5b3d20";
+  ctx.lineWidth = 6.5;
+  ctx.lineCap = "round";
   ctx.beginPath();
-  ctx.ellipse(-1, -2, 14, 6.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Visible back-line stripe — adds shape & dimension
-  ctx.strokeStyle = "rgba(60, 35, 15, 0.55)";
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(-13, -6);
-  ctx.quadraticCurveTo(-1, -9.5, 11, -7.5);
+  ctx.moveTo(8.5, -6 + bob * 0.5);
+  ctx.quadraticCurveTo(nx - 1, ny + 2, nx, ny);
   ctx.stroke();
 
-  // Cream rump patch (distinctive elk marking)
-  ctx.fillStyle = "rgba(245, 225, 180, 0.75)";
+  // head — long muzzle, rotates down while grazing
+  ctx.save();
+  ctx.translate(hx, hy);
+  ctx.rotate(p * 0.9 - 0.1);
+  ctx.fillStyle = "#7a5228";
   ctx.beginPath();
-  ctx.ellipse(-10, -2, 4, 3.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 5.4, 3.1, 0.35, 0, Math.PI * 2);
   ctx.fill();
-
-  // Lighter belly patch
-  ctx.fillStyle = "rgba(220, 180, 130, 0.5)";
+  ctx.fillStyle = "#8f6535";
   ctx.beginPath();
-  ctx.ellipse(0, 2, 10, 2.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(3.2, 1.6, 2.4, 1.6, 0.4, 0, Math.PI * 2);
   ctx.fill();
-
-  // Thick neck — curves from body to head
-  ctx.fillStyle = "#9d6230";
-  ctx.beginPath();
-  ctx.moveTo(9, -6);
-  ctx.quadraticCurveTo(14, -13, 12, -15);
-  ctx.quadraticCurveTo(9, -12, 8, -5);
-  ctx.fill();
-
-  // Neck shading
-  ctx.fillStyle = "rgba(60, 35, 15, 0.3)";
-  ctx.beginPath();
-  ctx.moveTo(8, -5);
-  ctx.quadraticCurveTo(11, -9, 13, -14);
-  ctx.lineTo(13, -12);
-  ctx.quadraticCurveTo(10, -7, 8, -3);
-  ctx.fill();
-
-  // Head — more elongated (elk have long muzzles)
-  ctx.fillStyle = "#8b5a23";
-  ctx.beginPath();
-  ctx.ellipse(13, -15, 5.5, 3.8, 0.15, 0, Math.PI * 2);
-  ctx.fill();
-  // Lighter muzzle tip
-  ctx.fillStyle = "#a8703a";
-  ctx.beginPath();
-  ctx.ellipse(17, -14, 2, 1.5, 0.2, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Nose
   ctx.fillStyle = "#1c1917";
   ctx.beginPath();
-  ctx.arc(18.5, -14, 0.8, 0, Math.PI * 2);
+  ctx.arc(4.8, 2.6, 0.85, 0, Math.PI * 2);
   ctx.fill();
-
-  // Ear
-  ctx.fillStyle = "#6e4520";
+  ctx.fillStyle = "#5b3d20";
   ctx.beginPath();
-  ctx.ellipse(10, -18, 1.4, 2.5, -0.3, 0, Math.PI * 2);
+  ctx.ellipse(-3.4, -2.6, 1.5, 2.7, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1c1917";
+  ctx.beginPath();
+  ctx.arc(-0.6, -1.1, 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,230,150,0.7)";
+  ctx.beginPath();
+  ctx.arc(-0.9, -1.4, 0.35, 0, Math.PI * 2);
   ctx.fill();
 
-  // Multi-point antlers — proportional, swept back
-  ctx.strokeStyle = "#d4d0c8";
-  ctx.lineWidth = 1.8;
+  // antlers — two beams swept back with tines (drawn in head space)
+  ctx.strokeStyle = "#e2d9c8";
+  ctx.lineWidth = 1.7;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
-  // Main beam
-  ctx.moveTo(11, -18);
-  ctx.lineTo(7, -25);
-  ctx.moveTo(11, -18);
-  ctx.lineTo(15, -25);
-  // Tines off left beam
-  ctx.moveTo(9, -22); ctx.lineTo(5, -24);
-  ctx.moveTo(8, -24); ctx.lineTo(4, -27);
-  ctx.moveTo(7, -25); ctx.lineTo(5, -28);
-  // Tines off right beam
-  ctx.moveTo(13, -22); ctx.lineTo(17, -24);
-  ctx.moveTo(14, -24); ctx.lineTo(18, -27);
-  ctx.moveTo(15, -25); ctx.lineTo(17, -28);
+  ctx.moveTo(-1.5, -2.8);
+  ctx.bezierCurveTo(-3.5, -8, -7.5, -11.5, -12.5, -12.5);
+  ctx.moveTo(-2.8, -5.6); ctx.lineTo(-1.2, -9.2);
+  ctx.moveTo(-4.8, -8.2); ctx.lineTo(-3.4, -12);
+  ctx.moveTo(-7.6, -10.4); ctx.lineTo(-6.8, -14.4);
+  ctx.moveTo(-10.4, -11.8); ctx.lineTo(-10.6, -15.8);
   ctx.stroke();
-
-  // Eye — on the new elongated head
-  ctx.fillStyle = "#1c1917";
+  ctx.strokeStyle = "#c9bfae";
+  ctx.lineWidth = 1.4;
   ctx.beginPath();
-  ctx.arc(13, -15.8, 0.9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "rgba(255,230,150,0.6)";
-  ctx.beginPath();
-  ctx.arc(13.2, -16, 0.35, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.moveTo(0.6, -2.6);
+  ctx.bezierCurveTo(-0.6, -7.5, -3.6, -11, -8, -13.6);
+  ctx.moveTo(-0.6, -5.4); ctx.lineTo(1.4, -8.6);
+  ctx.moveTo(-2.4, -8.0); ctx.lineTo(-1.0, -11.6);
+  ctx.moveTo(-5.0, -10.6); ctx.lineTo(-4.4, -14.2);
+  ctx.stroke();
+  ctx.restore();
 
-  // Grazing indicator — small green cue
-  if (elk.state === "graze") {
-    ctx.fillStyle = "rgba(34, 197, 94, 0.6)";
+  // graze cue (kept)
+  if (grazing) {
+    ctx.fillStyle = "rgba(34, 197, 94, 0.5)";
     ctx.beginPath();
-    ctx.arc(14, 2, 2, 0, Math.PI * 2);
+    ctx.arc(hx + 3, 11.5, 1.8, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Alarm pose when fleeing: head up + tail flashing cream
-  if (isRunning) {
-    // Tail flash (white alarm flag)
-    ctx.fillStyle = "rgba(255, 245, 220, 0.85)";
+  // alarm tail-flash when fleeing (kept)
+  if (running) {
+    ctx.fillStyle = "rgba(255, 245, 220, 0.9)";
     ctx.beginPath();
-    ctx.ellipse(-13, -5, 1.8, 2, 0, 0, Math.PI * 2);
+    ctx.ellipse(-13.5, -5 + bob * 0.4, 2.2, 2.6, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
 function drawBeaver(ctx, e, tick) {
-  // Shadow — stronger
-  softShadow(ctx, e.x + 3, e.y + 5, 8, 2.3, 0.36);
+  softShadow(ctx, e.x + 2, e.y + 5.5, 9, 2.5, 0.36);
 
-  // Tail-slap animation: when beaver is near river center, occasionally slap
-  // tail creates concentric splash rings on water
   const slapActive = e.tailSlap && e.tailSlap > 0;
   const slapT = slapActive ? 1 - e.tailSlap / 30 : 0;
+  const waddle = Math.sin(e.age * 0.15) * 0.08;
 
-  // Flat tail with texture — lifts up during slap
-  const tailLift = slapActive ? Math.sin(slapT * Math.PI) * 3 : 0;
-  ctx.fillStyle = "#5c3f2c";
+  // scaly paddle tail — lifts and slaps
+  const tailLift = slapActive ? Math.sin(slapT * Math.PI) * 5 : 0;
+  ctx.save();
+  ctx.translate(e.x - 7, e.y + 1.5);
+  ctx.rotate(0.28 - tailLift * 0.12 + waddle);
+  const tailGrad = ctx.createLinearGradient(-9, 0, 0, 0);
+  tailGrad.addColorStop(0, "#3f2c1e");
+  tailGrad.addColorStop(1, "#5c3f2c");
+  ctx.fillStyle = tailGrad;
   ctx.beginPath();
-  ctx.ellipse(e.x - 8, e.y + 1.5 - tailLift, 6, 2.5, 0.25 - tailLift * 0.15, 0, Math.PI * 2);
+  ctx.ellipse(-4, -tailLift, 5.8, 3, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.28)";
+  ctx.lineWidth = 0.5;
+  for (let i = -2; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-8.5, -tailLift + i * 1.1);
+    ctx.lineTo(-0.5, -tailLift + i * 1.1);
+    ctx.stroke();
+  }
+  ctx.restore();
 
-  // Slap ripples on water
+  // slap ripples (kept)
   if (slapActive) {
     ctx.strokeStyle = `rgba(200, 230, 255, ${0.6 * (1 - slapT)})`;
     ctx.lineWidth = 1.2;
     for (let ring = 0; ring < 3; ring++) {
-      const rad = 3 + slapT * 15 + ring * 4;
+      const rad = 3 + slapT * 16 + ring * 4;
       ctx.beginPath();
-      ctx.arc(e.x - 8, e.y + 3, rad, 0, Math.PI * 2);
+      ctx.arc(e.x - 9, e.y + 3, rad, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
 
-  // Tail detail lines
-  ctx.strokeStyle = "rgba(0,0,0,0.2)";
-  ctx.lineWidth = 0.6;
-  for (let i = 0; i < 4; i++) {
-    ctx.beginPath();
-    ctx.moveTo(e.x - 8 - 2.5, e.y - 0.5 + i * 0.6);
-    ctx.lineTo(e.x - 8 + 2.5, e.y - 0.5 + i * 0.6);
-    ctx.stroke();
-  }
-
-  // Body
-  const bg = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, 7);
-  bg.addColorStop(0, "#b8704d");
-  bg.addColorStop(1, "#8b5a2b");
+  // chunky pear body
+  const bg = ctx.createRadialGradient(e.x + 2, e.y - 2, 1, e.x, e.y, 9.5);
+  bg.addColorStop(0, "#a8713f");
+  bg.addColorStop(0.6, "#8b5a2b");
+  bg.addColorStop(1, "#6e4520");
   ctx.fillStyle = bg;
   ctx.beginPath();
-  ctx.ellipse(e.x, e.y, 7, 4.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(e.x, e.y, 8, 5.4, waddle, 0, Math.PI * 2);
   ctx.fill();
 
-  // Fur texture
-  ctx.strokeStyle = "rgba(0,0,0,0.15)";
-  ctx.lineWidth = 0.5;
+  // wet-fur sheen
+  ctx.strokeStyle = "rgba(230, 200, 160, 0.35)";
+  ctx.lineWidth = 0.8;
   ctx.beginPath();
-  ctx.ellipse(e.x, e.y, 7, 4.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(e.x - 1, e.y - 2.5, 5.5, 2.2, waddle - 0.15, Math.PI * 1.05, Math.PI * 1.9);
   ctx.stroke();
 
-  // Ear
-  ctx.fillStyle = "#8b5a2b";
+  // head
+  ctx.fillStyle = "#7a4e24";
   ctx.beginPath();
-  ctx.arc(e.x - 2, e.y - 3, 1.2, 0, Math.PI * 2);
+  ctx.ellipse(e.x + 6.5, e.y - 1.5, 3.8, 3.2, 0.15, 0, Math.PI * 2);
   ctx.fill();
-
-  // Eye
+  ctx.fillStyle = "#5c3a1a";
+  ctx.beginPath();
+  ctx.arc(e.x + 4.6, e.y - 4.2, 1.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#96662f";
+  ctx.beginPath();
+  ctx.ellipse(e.x + 7.8, e.y + 0.2, 2, 1.6, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#241812";
+  ctx.beginPath();
+  ctx.ellipse(e.x + 9.8, e.y - 1.6, 1, 0.8, 0.2, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = "#1c1917";
   ctx.beginPath();
-  ctx.arc(e.x + 4, e.y - 1, 1.1, 0, Math.PI * 2);
+  ctx.arc(e.x + 6.2, e.y - 2.6, 0.95, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.7)";
+  ctx.beginPath();
+  ctx.arc(e.x + 5.9, e.y - 2.9, 0.35, 0, Math.PI * 2);
   ctx.fill();
 
-  // Front feet
-  ctx.fillStyle = "#5c3f2c";
-  ctx.beginPath();
-  ctx.ellipse(e.x + 3, e.y + 3.5, 1.5, 1, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(e.x - 1, e.y + 3.5, 1.5, 1, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Buck teeth - more prominent
+  // buck teeth (kept)
   ctx.fillStyle = "#fef3c7";
-  ctx.fillRect(e.x + 5.5, e.y + 0.2, 1.2, 2.5);
-  ctx.fillRect(e.x + 7, e.y + 0.2, 1.2, 2.5);
-
-  // Teeth detail
+  ctx.fillRect(e.x + 8.6, e.y + 0.4, 1.1, 2.6);
+  ctx.fillRect(e.x + 9.9, e.y + 0.4, 1.1, 2.6);
   ctx.strokeStyle = "rgba(0,0,0,0.3)";
   ctx.lineWidth = 0.4;
-  ctx.beginPath();
-  ctx.moveTo(e.x + 5.5, e.y + 1); ctx.lineTo(e.x + 6.7, e.y + 1);
-  ctx.moveTo(e.x + 7, e.y + 1); ctx.lineTo(e.x + 8.2, e.y + 1);
-  ctx.stroke();
+  ctx.strokeRect(e.x + 8.6, e.y + 0.4, 1.1, 2.6);
+  ctx.strokeRect(e.x + 9.9, e.y + 0.4, 1.1, 2.6);
+
+  // little front paws
+  ctx.fillStyle = "#5c3f2c";
+  ctx.beginPath(); ctx.ellipse(e.x + 4.5, e.y + 2.8, 1.3, 0.9, 0.3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(e.x + 6.8, e.y + 3, 1.3, 0.9, 0.3, 0, Math.PI * 2); ctx.fill();
 }
 
 function drawCoyote(ctx, e, tick) {
@@ -2262,73 +2407,107 @@ function drawCoyote(ctx, e, tick) {
   ctx.translate(e.x, e.y);
   ctx.scale(facing, 1);
 
-  const lp = Math.sin(e.age * 0.15) * 3.5;
+  const gait = e.age * 0.17;
+  const amp = 0.7;
+  const bob = Math.sin(gait * 2) * 0.4;
 
-  // Shadow
-  softShadow(ctx, 0, 6, 8, 2.5, 0.28);
+  softShadow(ctx, 0, 7.5, 10, 2.6, 0.28);
 
-  // Slender legs (distinct from wolf)
-  ctx.strokeStyle = "#d47c3b";
-  ctx.lineWidth = 1.6;
+  // far legs — thin
+  drawLeg(ctx, -5.5, 2.5, gait + Math.PI, 6.2, amp, "#a4713d", "#3a2a16", 1.5);
+  drawLeg(ctx, 4.5, 2.3, gait + Math.PI * 1.45, 6.4, amp, "#a4713d", "#3a2a16", 1.5);
+
+  // tail — carried LOW, black tip (coyote ID vs wolf)
   ctx.lineCap = "round";
+  ctx.strokeStyle = "#c98d52";
+  ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(-3, 2.5); ctx.lineTo(-3 + lp, 8);
-  ctx.moveTo(3, 2.5); ctx.lineTo(3 - lp, 8);
+  ctx.moveTo(-8, -0.5);
+  ctx.quadraticCurveTo(-11.5, 3.5, -13, 6.5 + Math.sin(e.age * 0.1) * 1);
+  ctx.stroke();
+  ctx.strokeStyle = "#2b2018";
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(-12.4, 5.2);
+  ctx.lineTo(-13.2, 7 + Math.sin(e.age * 0.1) * 1);
   ctx.stroke();
 
-  // Bushy tail
-  ctx.strokeStyle = "#e89556";
-  ctx.lineWidth = 2.2;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(-6, -1);
-  ctx.quadraticCurveTo(-12, -8, -10, -11 + Math.sin(e.age * 0.1) * 1.5);
-  ctx.stroke();
-
-  // Body - more orange/tan
-  const bodyGrad = ctx.createRadialGradient(0, -1, 0, 0, -1, 9);
-  bodyGrad.addColorStop(0, "#e89556");
-  bodyGrad.addColorStop(1, "#d97706");
+  // lean body
+  const bodyGrad = ctx.createLinearGradient(0, -6, 0, 3);
+  bodyGrad.addColorStop(0, "#9c7040");
+  bodyGrad.addColorStop(0.55, "#c99a5e");
+  bodyGrad.addColorStop(1, "#e8d3ae");
   ctx.fillStyle = bodyGrad;
   ctx.beginPath();
-  ctx.ellipse(0, -1, 8, 4.5, 0, 0, Math.PI * 2);
+  ctx.moveTo(-8.5, -2 + bob * 0.4);
+  ctx.bezierCurveTo(-6.5, -5.8 + bob, -1, -6.2 + bob, 3, -5.4 + bob);
+  ctx.bezierCurveTo(6, -4.8, 7.5, -3, 7.8, -1.4);
+  ctx.bezierCurveTo(8, 1, 6, 2.4, 3.5, 2.7);
+  ctx.bezierCurveTo(0, 3.1, -3.5, 2.2, -5.5, 1.4);
+  ctx.bezierCurveTo(-7.8, 0.5, -9, -0.5, -8.5, -2 + bob * 0.4);
+  ctx.closePath();
   ctx.fill();
 
-  // Head
-  ctx.fillStyle = "#ca8a04";
+  // grizzled back wash
+  ctx.fillStyle = "rgba(90, 80, 66, 0.35)";
   ctx.beginPath();
-  ctx.ellipse(7, -4, 4, 3.2, -0.1, 0, Math.PI * 2);
+  ctx.moveTo(-7, -3 + bob * 0.5);
+  ctx.quadraticCurveTo(-1, -6.3 + bob, 4.5, -4.8 + bob * 0.5);
+  ctx.quadraticCurveTo(-1, -3.4, -7, -3 + bob * 0.5);
   ctx.fill();
 
-  // Pointy muzzle
-  ctx.fillStyle = "#f0a952";
+  // near legs
+  drawLeg(ctx, -4.5, 2.8, gait, 7, amp, "#b8834a", "#453218", 1.7);
+  drawLeg(ctx, 4, 2.6, gait + Math.PI * 0.45, 7.2, amp, "#b8834a", "#453218", 1.7);
+
+  // narrow head
+  const hx = 9.5, hy = -4.5 + bob * 0.3;
+  ctx.fillStyle = "#b8834a";
   ctx.beginPath();
-  ctx.moveTo(9.5, -3.5);
-  ctx.lineTo(13, -2.8);
-  ctx.lineTo(9.5, -1.5);
+  ctx.ellipse(hx, hy, 3.4, 2.7, -0.1, 0, Math.PI * 2);
   ctx.fill();
-
-  // Nose
+  ctx.fillStyle = "#d9ad72";
+  ctx.beginPath();
+  ctx.moveTo(hx + 1.5, hy - 1.4);
+  ctx.lineTo(hx + 6.2, hy + 0.4);
+  ctx.lineTo(hx + 1.8, hy + 1.7);
+  ctx.closePath();
+  ctx.fill();
   ctx.fillStyle = "#1c1917";
   ctx.beginPath();
-  ctx.arc(13.2, -3, 0.5, 0, Math.PI * 2);
+  ctx.arc(hx + 6, hy + 0.4, 0.55, 0, Math.PI * 2);
   ctx.fill();
 
-  // Ears
-  ctx.fillStyle = "#b45309";
+  // oversized pointed ears (coyote signature)
+  ctx.fillStyle = "#a4713d";
   ctx.beginPath();
-  ctx.moveTo(5, -7.5); ctx.lineTo(3.5, -12); ctx.lineTo(2, -6.5); ctx.fill();
+  ctx.moveTo(hx - 2.8, hy - 1.6);
+  ctx.lineTo(hx - 4.2, hy - 8);
+  ctx.lineTo(hx - 0.6, hy - 2.4);
+  ctx.closePath();
+  ctx.fill();
   ctx.beginPath();
-  ctx.moveTo(8.5, -7.5); ctx.lineTo(10, -12); ctx.lineTo(8, -6.5); ctx.fill();
+  ctx.moveTo(hx - 0.2, hy - 2.3);
+  ctx.lineTo(hx + 1.6, hy - 7.6);
+  ctx.lineTo(hx + 2.6, hy - 1.7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#ecd3ae";
+  ctx.beginPath();
+  ctx.moveTo(hx - 2.6, hy - 2.2);
+  ctx.lineTo(hx - 3.5, hy - 6.4);
+  ctx.lineTo(hx - 1.3, hy - 2.7);
+  ctx.closePath();
+  ctx.fill();
 
-  // Eye
+  // eye
+  ctx.fillStyle = "#f5c96b";
+  ctx.beginPath();
+  ctx.ellipse(hx + 0.7, hy - 0.9, 1, 0.85, -0.15, 0, Math.PI * 2);
+  ctx.fill();
   ctx.fillStyle = "#1c1917";
   ctx.beginPath();
-  ctx.arc(8, -4.5, 0.9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#fef3c7";
-  ctx.beginPath();
-  ctx.arc(8.2, -4.7, 0.3, 0, Math.PI * 2);
+  ctx.arc(hx + 1, hy - 0.9, 0.45, 0, Math.PI * 2);
   ctx.fill();
 }
 
@@ -2400,12 +2579,13 @@ function drawFish(ctx, e, tick) {
   ctx.arc(e.x + 4.2, e.y - 0.7, 0.55, 0, Math.PI * 2);
   ctx.fill();
 
-  // Subtle ripple trail
-  if (tick % 8 === 0) {
-    ctx.strokeStyle = "rgba(200, 230, 255, 0.4)";
-    ctx.lineWidth = 0.5;
+  // surface ripple ring — expands and fades as the trout rises
+  const ripT = (e.age % 70) / 70;
+  if (ripT < 0.5) {
+    ctx.strokeStyle = `rgba(210, 235, 255, ${0.4 * (1 - ripT * 2)})`;
+    ctx.lineWidth = 0.8;
     ctx.beginPath();
-    ctx.arc(e.x - 12, e.y, 2.5, -0.4, 0.4);
+    ctx.ellipse(e.x, e.y, 4 + ripT * 14, (4 + ripT * 14) * 0.45, 0, 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -2474,6 +2654,18 @@ function drawBird(ctx, e) {
   ctx.lineTo(e.x + 7, e.y - wing * 0.6 + bob);
   ctx.stroke();
 
+  // wing motion blur on the downstroke
+  if (wing > 3) {
+    ctx.strokeStyle = "rgba(147, 197, 253, 0.3)";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(e.x - 2, e.y + bob);
+    ctx.quadraticCurveTo(e.x - 7, e.y - wing * 0.5 + bob, e.x - 9.5, e.y - wing * 0.3 + bob);
+    ctx.moveTo(e.x + 1, e.y + bob);
+    ctx.quadraticCurveTo(e.x + 5, e.y - wing * 0.5 + bob, e.x + 7.5, e.y - wing * 0.3 + bob);
+    ctx.stroke();
+  }
+
   // Tail feathers — split V
   ctx.strokeStyle = "#1e40af";
   ctx.lineWidth = 1.5;
@@ -2498,7 +2690,9 @@ function drawBird(ctx, e) {
 }
 
 function drawRabbit(ctx, e, tick) {
-  const hop = e.state === "flee" ? Math.abs(Math.sin(e.age * 0.3)) * 4 : 0;
+  const hopT = e.state === "flee" ? Math.sin(e.age * 0.3) : 0;
+  const hop = Math.abs(hopT) * 4;
+  const earTilt = e.state === "flee" ? -0.5 : 0;
 
   // Shadow
   softShadow(ctx, e.x, e.y + 5, 5.5, 2.0, 0.22);
@@ -2506,7 +2700,7 @@ function drawRabbit(ctx, e, tick) {
   // Body
   ctx.fillStyle = "#e5e7eb";
   ctx.beginPath();
-  ctx.ellipse(e.x, e.y - hop, 5.5, 3.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(e.x, e.y - hop, 5.5 + hop * 0.35, 3.5 - hop * 0.18, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Head
@@ -2518,19 +2712,19 @@ function drawRabbit(ctx, e, tick) {
   // Ears - prominent
   ctx.fillStyle = "#d1d5db";
   ctx.beginPath();
-  ctx.ellipse(e.x + 1.5, e.y - 8 - hop, 1.5, 4.5, -0.15, 0, Math.PI * 2);
+  ctx.ellipse(e.x + 1.5, e.y - 8 - hop, 1.5, 4.5, -0.15 + earTilt, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.ellipse(e.x + 4.5, e.y - 8 - hop, 1.5, 4.5, 0.15, 0, Math.PI * 2);
+  ctx.ellipse(e.x + 4.5, e.y - 8 - hop, 1.5, 4.5, 0.15 + earTilt, 0, Math.PI * 2);
   ctx.fill();
 
   // Inner ears - pink
   ctx.fillStyle = "#fecaca";
   ctx.beginPath();
-  ctx.ellipse(e.x + 1.5, e.y - 8 - hop, 0.75, 2.5, -0.15, 0, Math.PI * 2);
+  ctx.ellipse(e.x + 1.5, e.y - 8 - hop, 0.75, 2.5, -0.15 + earTilt, 0, Math.PI * 2);
   ctx.fill();
   ctx.beginPath();
-  ctx.ellipse(e.x + 4.5, e.y - 8 - hop, 0.75, 2.5, 0.15, 0, Math.PI * 2);
+  ctx.ellipse(e.x + 4.5, e.y - 8 - hop, 0.75, 2.5, 0.15 + earTilt, 0, Math.PI * 2);
   ctx.fill();
 
   // Nose
@@ -2571,190 +2765,181 @@ function drawRabbit(ctx, e, tick) {
 }
 
 function drawBear(ctx, e, tick) {
+  const facing = e.vx >= 0 ? 1 : -1;
   ctx.translate(e.x, e.y);
-  const bob = Math.sin(e.age * 0.04) * 1.5;
+  ctx.scale(facing, 1);
 
-  // Shadow
-  softShadow(ctx, 0, 10, 11, 3.3, 0.38);
+  const gait = e.age * 0.09;
+  const bob = Math.sin(gait * 2) * 0.8;
+  const paceF = Math.sin(gait) * 2.6;
+  const paceB = Math.sin(gait + Math.PI * 0.85) * 2.6;
 
-  // Legs
-  const lp = Math.sin(e.age * 0.08) * 3;
-  ctx.fillStyle = "#5c3a1e";
-  ctx.beginPath(); ctx.ellipse(-6 + lp, 9, 3, 4, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(6 - lp, 9, 3, 4, 0, 0, Math.PI * 2); ctx.fill();
+  softShadow(ctx, 0, 11, 16, 3.8, 0.4);
 
-  // Body — large, brown
-  const bodyGrad = ctx.createRadialGradient(0, bob, 2, 0, bob, 12);
-  bodyGrad.addColorStop(0, "#8B6914");
-  bodyGrad.addColorStop(0.5, "#6B4226");
-  bodyGrad.addColorStop(1, "#4a2d14");
-  ctx.fillStyle = bodyGrad;
-  ctx.beginPath();
-  ctx.ellipse(0, bob, 10, 8, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Head
-  ctx.fillStyle = "#5c3a1e";
-  ctx.beginPath();
-  ctx.ellipse(0, bob - 9, 6, 5.5, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Ears
-  ctx.fillStyle = "#7a4a2a";
-  ctx.beginPath(); ctx.arc(-4.5, bob - 13, 2.5, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(4.5, bob - 13, 2.5, 0, Math.PI * 2); ctx.fill();
-
-  // Snout
-  ctx.fillStyle = "#92400e";
-  ctx.beginPath();
-  ctx.ellipse(0, bob - 7, 3, 2, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Nose
-  ctx.fillStyle = "#1c1917";
-  ctx.beginPath();
-  ctx.ellipse(0, bob - 7.5, 1.2, 0.8, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Eyes
-  ctx.fillStyle = "#1c1917";
-  ctx.beginPath();
-  ctx.arc(-2.5, bob - 10, 0.8, 0, Math.PI * 2);
-  ctx.arc(2.5, bob - 10, 0.8, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Hump (grizzly characteristic)
-  ctx.fillStyle = "#6B4226";
-  ctx.beginPath();
-  ctx.ellipse(-1, bob - 4, 5, 3, -0.2, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-}
-
-function drawHunter(ctx, e, tick) {
-  ctx.translate(e.x, e.y);
-  const lp = Math.sin(e.age * 0.06) * 2.5;
-
-  // Shadow
-  softShadow(ctx, 0, 12, 8, 2.7, 0.32);
-
-  // Legs
-  ctx.strokeStyle = "#5c4a2d";
-  ctx.lineWidth = 3;
+  // far legs — thick columns
+  ctx.strokeStyle = "#4a2f18";
+  ctx.lineWidth = 4.6;
   ctx.lineCap = "round";
   ctx.beginPath();
-  ctx.moveTo(-2.5, 5); ctx.lineTo(-2.5 + lp, 11);
-  ctx.moveTo(2.5, 5); ctx.lineTo(2.5 - lp, 11);
+  ctx.moveTo(-8, 3); ctx.lineTo(-8 - paceB, 10.5);
+  ctx.moveTo(7.5, 2.5); ctx.lineTo(7.5 - paceF, 10.5);
   ctx.stroke();
 
-  // Boots
-  ctx.fillStyle = "#3d2a0a";
-  ctx.fillRect(-4.5, 10, 4.5, 2.5);
-  ctx.fillRect(0, 10, 4.5, 2.5);
-
-  // Body — red jacket
-  const bodyGrad = ctx.createLinearGradient(0, -8, 0, 2);
-  bodyGrad.addColorStop(0, "#ef4444");
-  bodyGrad.addColorStop(1, "#dc2626");
+  // massive body — high shoulder hump, low rump
+  const bodyGrad = ctx.createLinearGradient(0, -11, 0, 6);
+  bodyGrad.addColorStop(0, "#7c5230");
+  bodyGrad.addColorStop(0.55, "#6b4226");
+  bodyGrad.addColorStop(1, "#503018");
   ctx.fillStyle = bodyGrad;
   ctx.beginPath();
-  ctx.moveTo(-5, -6);
-  ctx.lineTo(5, -6);
-  ctx.lineTo(5, 5);
-  ctx.lineTo(-5, 5);
+  ctx.moveTo(-13.5, 0 + bob * 0.4);
+  ctx.bezierCurveTo(-13.5, -6.5 + bob, -8, -8.5 + bob, -3.5, -8.2 + bob);
+  ctx.bezierCurveTo(0.5, -11.8 + bob, 5, -11.4 + bob, 7, -8.2 + bob);
+  ctx.bezierCurveTo(9.5, -6.5, 11, -3.5, 11, -1);
+  ctx.bezierCurveTo(11, 2.8, 7, 5.4, 1, 5.6);
+  ctx.bezierCurveTo(-5, 5.8, -13.5, 5, -13.5, 0 + bob * 0.4);
   ctx.closePath();
   ctx.fill();
 
-  // Jacket detail
-  ctx.strokeStyle = "#b91c1c";
+  // shaggy belly fringe
+  ctx.strokeStyle = "rgba(40, 24, 12, 0.5)";
   ctx.lineWidth = 1;
+  for (let i = 0; i < 5; i++) {
+    const fx = -9 + i * 3.6;
+    ctx.beginPath();
+    ctx.moveTo(fx, 4.6 + (i % 2) * 0.6);
+    ctx.lineTo(fx - 0.8, 6.4 + (i % 2) * 0.6);
+    ctx.stroke();
+  }
+
+  // rim light on the hump
+  ctx.strokeStyle = "rgba(220, 190, 150, 0.4)";
+  ctx.lineWidth = 1.1;
   ctx.beginPath();
-  ctx.moveTo(0, -6);
-  ctx.lineTo(0, 5);
+  ctx.moveTo(-3, -8.6 + bob);
+  ctx.quadraticCurveTo(2.5, -11.9 + bob, 6.5, -8.6 + bob);
   ctx.stroke();
 
-  // Arms
-  ctx.strokeStyle = "#9d2d2d";
+  // near legs + paws with claws
+  ctx.strokeStyle = "#5c3a1e";
+  ctx.lineWidth = 5.2;
+  ctx.beginPath();
+  ctx.moveTo(-6.5, 3.5); ctx.lineTo(-6.5 + paceB, 11);
+  ctx.moveTo(9, 3); ctx.lineTo(9 + paceF, 11);
+  ctx.stroke();
+  ctx.fillStyle = "#3a2410";
+  ctx.beginPath(); ctx.ellipse(-6.5 + paceB, 11.2, 3, 1.4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(9 + paceF, 11.2, 3, 1.4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#d6c9b0";
+  ctx.lineWidth = 0.7;
+  for (let c = 0; c < 3; c++) {
+    ctx.beginPath();
+    ctx.moveTo(9 + paceF + 1 + c, 10.8);
+    ctx.lineTo(9 + paceF + 1.8 + c, 11.9);
+    ctx.stroke();
+  }
+
+  // head — carried low and forward
+  const hx = 13, hy = -3 + bob * 0.5;
+  ctx.fillStyle = "#6b4226";
+  ctx.beginPath();
+  ctx.ellipse(hx, hy, 5, 4.2, 0.15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#a97b4a";
+  ctx.beginPath();
+  ctx.ellipse(hx + 3.8, hy + 1, 2.6, 1.8, 0.25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#1c1917";
+  ctx.beginPath();
+  ctx.ellipse(hx + 6, hy + 1.4, 1.15, 0.9, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#7a4a2a";
+  ctx.beginPath(); ctx.arc(hx - 2.6, hy - 4, 1.9, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#503018";
+  ctx.beginPath(); ctx.arc(hx - 2.6, hy - 4, 1, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#1c1917";
+  ctx.beginPath(); ctx.arc(hx + 0.6, hy - 1, 0.75, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.6)";
+  ctx.beginPath(); ctx.arc(hx + 0.35, hy - 1.25, 0.28, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawHunter(ctx, e, tick) {
+  const facing = e.vx >= 0 ? 1 : -1;
+  ctx.translate(e.x, e.y);
+  ctx.scale(facing, 1);
+  const lp = Math.sin(e.age * 0.08) * 2.8;
+
+  softShadow(ctx, 0, 12.5, 9, 2.8, 0.32);
+
+  // legs — olive pants
+  ctx.strokeStyle = "#4d5136";
   ctx.lineWidth = 3;
   ctx.lineCap = "round";
   ctx.beginPath();
-  ctx.moveTo(-5, -2); ctx.lineTo(-8, 2);
-  ctx.moveTo(5, -2); ctx.lineTo(13, -4);
+  ctx.moveTo(-1.5, 4); ctx.lineTo(-2.5 + lp, 11);
+  ctx.moveTo(1.5, 4); ctx.lineTo(2.5 - lp, 11);
+  ctx.stroke();
+  // boots
+  ctx.fillStyle = "#2d2013";
+  ctx.beginPath(); ctx.ellipse(-2.5 + lp + 0.8, 11.6, 2.2, 1.1, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(2.5 - lp + 0.8, 11.6, 2.2, 1.1, 0, 0, Math.PI * 2); ctx.fill();
+
+  // torso — olive jacket under blaze-orange vest
+  ctx.fillStyle = "#57603c";
+  ctx.fillRect(-5, -7, 10, 12);
+  ctx.fillStyle = "#f97316";
+  ctx.fillRect(-3.6, -6.4, 7.2, 10.6);
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(0, -6.4); ctx.lineTo(0, 4);
   ctx.stroke();
 
-  // Rifle barrel
-  ctx.strokeStyle = "#404040";
-  ctx.lineWidth = 2.5;
+  // rear arm
+  ctx.strokeStyle = "#4a5232";
+  ctx.lineWidth = 2.6;
   ctx.beginPath();
-  ctx.moveTo(5, -2);
-  ctx.lineTo(18, -6);
+  ctx.moveTo(-4, -3); ctx.lineTo(-6.5, 1.5);
   ctx.stroke();
 
-  // Rifle stock
-  ctx.strokeStyle = "#92400e";
-  ctx.lineWidth = 3;
+  // rifle — slung, barrel up-forward
+  ctx.strokeStyle = "#3f3f46";
+  ctx.lineWidth = 1.8;
   ctx.beginPath();
-  ctx.moveTo(5, -2);
-  ctx.lineTo(11, -4);
+  ctx.moveTo(2, 0);
+  ctx.lineTo(14, -9);
+  ctx.stroke();
+  ctx.strokeStyle = "#7c4a1e";
+  ctx.lineWidth = 2.8;
+  ctx.beginPath();
+  ctx.moveTo(2.5, 0);
+  ctx.lineTo(8.5, -4.6);
   ctx.stroke();
 
-  // Scope
-  ctx.strokeStyle = "#475569";
-  ctx.lineWidth = 1.2;
+  // front arm to the rifle
+  ctx.strokeStyle = "#616b42";
+  ctx.lineWidth = 2.6;
   ctx.beginPath();
-  ctx.arc(14, -5.5, 1.5, 0, Math.PI * 2);
+  ctx.moveTo(4, -3); ctx.lineTo(8, -4.5);
   ctx.stroke();
+  ctx.fillStyle = "#e8b88a";
+  ctx.beginPath(); ctx.arc(8.3, -4.6, 1.3, 0, Math.PI * 2); ctx.fill();
 
-  // Head
-  ctx.fillStyle = "#fed7aa";
+  // head + blaze cap
+  ctx.fillStyle = "#e8b88a";
   ctx.beginPath();
-  ctx.arc(0, -12, 5, 0, Math.PI * 2);
+  ctx.arc(0.5, -11, 4, 0, Math.PI * 2);
   ctx.fill();
-
-  // Hat
-  ctx.fillStyle = "#991b1b";
-  ctx.fillRect(-6, -18, 12, 5);
-  ctx.fillRect(-5, -16, 10, 3);
-
-  // Brim
-  ctx.fillStyle = "#7f1d1d";
-  ctx.fillRect(-8, -15, 16, 1.5);
-
-  // Face
+  ctx.fillStyle = "#f97316";
+  ctx.beginPath();
+  ctx.arc(0.5, -11.6, 4.05, Math.PI, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#c2410c";
+  ctx.fillRect(0.5, -12.4, 6.4, 1.4);
+  // eye
   ctx.fillStyle = "#1c1917";
-  ctx.beginPath();
-  ctx.arc(-1.5, -11, 0.9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(1.5, -11, 0.9, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Mouth
-  ctx.strokeStyle = "#1c1917";
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.arc(0, -10, 0.8, 0, Math.PI);
-  ctx.stroke();
-
-  // Danger aura - pulsing
-  ctx.strokeStyle = `rgba(239, 68, 68, ${0.4 + Math.sin(tick * 0.05) * 0.2})`;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(0, -4, 24, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // Concentric danger circles
-  ctx.strokeStyle = `rgba(239, 68, 68, ${0.2 + Math.sin(tick * 0.05 + 0.3) * 0.1})`;
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.arc(0, -4, 18, 0, Math.PI * 2);
-  ctx.stroke();
+  ctx.beginPath(); ctx.arc(2.4, -10.6, 0.6, 0, Math.PI * 2); ctx.fill();
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CASCADE ALERTS
-// ═══════════════════════════════════════════════════════════════════════════════
 
 function getCascadeAlerts(stats) {
   const a = [];
