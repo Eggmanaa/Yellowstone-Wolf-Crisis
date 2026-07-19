@@ -4314,6 +4314,56 @@ function applyGlobalEvents(eco, tick) {
 // MAIN COMPONENT - FULL SCREEN LAYOUT
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ─── Swipe-to-dismiss wrapper — pointer events cover touch, pen and mouse ───
+// Tap the ✕ or drag the card sideways past ~70px to flick it away.
+function Dismissible({ onDismiss, children, style }) {
+  const [dx, setDx] = useState(0);
+  const dragRef = useRef(null);
+  return (
+    <div
+      style={{
+        touchAction: "pan-y",
+        transform: `translateX(${dx}px)`,
+        opacity: Math.max(0.05, 1 - Math.abs(dx) / 150),
+        transition: dragRef.current && dragRef.current.captured ? "none" : "transform 0.2s ease, opacity 0.2s ease",
+        ...style,
+      }}
+      onPointerDown={(e) => {
+        dragRef.current = { startX: e.clientX, id: e.pointerId, captured: false };
+      }}
+      onPointerMove={(e) => {
+        const d0 = dragRef.current;
+        if (!d0) return;
+        const d = e.clientX - d0.startX;
+        if (!d0.captured && Math.abs(d) > 6) {
+          d0.captured = true;
+          try { e.currentTarget.setPointerCapture?.(d0.id); } catch { /* stale pointer id — drag still works */ }
+        }
+        if (d0.captured) setDx(d);
+      }}
+      onPointerUp={(e) => {
+        const d0 = dragRef.current;
+        if (!d0) return;
+        const d = e.clientX - d0.startX;
+        dragRef.current = null;
+        if (d0.captured && Math.abs(d) > 70) {
+          setDx(d * 3);
+          setTimeout(onDismiss, 130);
+        } else {
+          setDx(0);
+        }
+      }}
+      onPointerCancel={() => { dragRef.current = null; setDx(0); }}
+      onPointerLeave={() => {
+        const d0 = dragRef.current;
+        if (d0 && !d0.captured) { dragRef.current = null; setDx(0); }
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function Simulation() {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -4326,6 +4376,8 @@ export default function Simulation() {
   const [history, setHistory] = useState([]);
   const [score, setScore] = useState(22);
   const [alerts, setAlerts] = useState([]);
+  const [dismissedAlerts, setDismissedAlerts] = useState(() => new Set());
+  const dismissAlert = (title) => setDismissedAlerts(prev => { const next = new Set(prev); next.add(title); return next; });
   const [selectedTool, setSelectedTool] = useState(WOLF);
   const [chartTab, setChartTab] = useState("predprey");
   const [showHelp, setShowHelp] = useState(true);
@@ -4453,6 +4505,15 @@ export default function Simulation() {
     setScore(eco.balanceScore);
     const newAlerts = getCascadeAlerts(eco.stats);
     setAlerts(newAlerts);
+    // let a dismissed alert return once its condition has fully cleared
+    setDismissedAlerts(prev => {
+      if (prev.size === 0) return prev;
+      const activeTitles = new Set(newAlerts.map(al => al.title));
+      let stale = false;
+      for (const t of prev) if (!activeTitles.has(t)) { stale = true; break; }
+      if (!stale) return prev;
+      return new Set([...prev].filter(t => activeTitles.has(t)));
+    });
 
     // Game timer and win/loss logic
     if (gameState === "playing") {
@@ -5078,16 +5139,20 @@ export default function Simulation() {
           {/* Alerts overlay */}
           {alerts.length > 0 && (
             <div style={{ position: "absolute", bottom: m ? 62 : 12, left: 12, maxWidth: 340, pointerEvents: "none", zIndex: 4 }}>
-              {alerts.slice(0, 3).map((a, i) => (
-                <div key={i} style={{
-                  background: "rgba(13,19,32,0.9)",
-                  border: "1px solid rgba(148,163,184,0.14)",
-                  borderLeft: `3px solid ${a.sev === "crit" ? "#ef4444" : "#eab308"}`,
-                  borderRadius: 10, padding: "7px 11px", marginBottom: 5, backdropFilter: "blur(8px)",
-                  boxShadow: "0 6px 18px rgba(0,0,0,0.35)", animation: "slideInLeft 0.3s ease",
-                }}>
-                  <span style={{ fontWeight: 700, fontSize: 11, color: a.sev === "crit" ? "#fca5a5" : "#fcd34d" }}>{a.icon} {a.title}</span>
-                  <span style={{ fontSize: 10, color: "#d6d3d1", marginLeft: 6 }}>{a.msg}</span>
+              {alerts.filter(a => !dismissedAlerts.has(a.title)).slice(0, 3).map((a) => (
+                <div key={a.title} style={{ animation: "slideInLeft 0.3s ease", marginBottom: 5 }}>
+                  <Dismissible onDismiss={() => dismissAlert(a.title)} style={{
+                    pointerEvents: "auto",
+                    background: "rgba(13,19,32,0.9)",
+                    border: "1px solid rgba(148,163,184,0.14)",
+                    borderLeft: `3px solid ${a.sev === "crit" ? "#ef4444" : "#eab308"}`,
+                    borderRadius: 10, padding: "7px 24px 7px 11px", backdropFilter: "blur(8px)",
+                    boxShadow: "0 6px 18px rgba(0,0,0,0.35)", position: "relative", cursor: "grab",
+                  }}>
+                    <span style={{ fontWeight: 700, fontSize: 11, color: a.sev === "crit" ? "#fca5a5" : "#fcd34d" }}>{a.icon} {a.title}</span>
+                    <span style={{ fontSize: 10, color: "#d6d3d1", marginLeft: 6 }}>{a.msg}</span>
+                    <button className="ub" onClick={() => dismissAlert(a.title)} title="Dismiss" style={{ position: "absolute", top: 3, right: 5, background: "transparent", border: "none", color: "#94a3b8", fontSize: 12, cursor: "pointer", padding: 2, lineHeight: 1 }}>✕</button>
+                  </Dismissible>
                 </div>
               ))}
             </div>
@@ -5097,14 +5162,19 @@ export default function Simulation() {
           {spokenSubtitle && narratorEnabled && (
             <div style={{
               position: "absolute", bottom: alerts.length > 0 ? (m ? 110 : 80) : (m ? 62 : 16), left: "50%", transform: "translateX(-50%)",
-              maxWidth: m ? "92%" : "70%", background: "rgba(0,0,0,0.82)", borderRadius: m ? 8 : 10, padding: m ? "6px 12px" : "10px 20px",
-              border: "1px solid rgba(244,114,182,0.3)", backdropFilter: "blur(8px)", zIndex: 5, pointerEvents: "none",
+              maxWidth: m ? "92%" : "70%", zIndex: 5, pointerEvents: "auto",
               animation: "subtitleFadeIn 0.4s ease-out",
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: m ? 11 : 14 }}>🎙️</span>
-                <span style={{ fontSize: m ? 10 : 12, color: "#f1f5f9", lineHeight: 1.4, fontStyle: "italic" }}>{spokenSubtitle}</span>
-              </div>
+              <Dismissible onDismiss={() => setSpokenSubtitle(null)} style={{
+                background: "rgba(0,0,0,0.82)", borderRadius: m ? 8 : 10, padding: m ? "6px 26px 6px 12px" : "10px 34px 10px 20px",
+                border: "1px solid rgba(244,114,182,0.3)", backdropFilter: "blur(8px)", position: "relative", cursor: "grab",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: m ? 11 : 14 }}>🎙️</span>
+                  <span style={{ fontSize: m ? 10 : 12, color: "#f1f5f9", lineHeight: 1.4, fontStyle: "italic" }}>{spokenSubtitle}</span>
+                </div>
+                <button className="ub" onClick={() => setSpokenSubtitle(null)} title="Dismiss" style={{ position: "absolute", top: 3, right: 6, background: "transparent", border: "none", color: "#94a3b8", fontSize: 13, cursor: "pointer", padding: 2, lineHeight: 1 }}>✕</button>
+              </Dismissible>
             </div>
           )}
 
@@ -5390,7 +5460,8 @@ export default function Simulation() {
 
       {/* ═══ REAL-WORLD DATA CARD ═══ */}
       {dataCard && (
-        <div style={{ position: "fixed", top: m ? 58 : 78, right: m ? 8 : 16, maxWidth: m ? 280 : 340, background: "linear-gradient(135deg, #0c1d3a, #1e293b)", borderRadius: 10, padding: m ? "10px 12px" : "12px 14px", border: "1px solid #3b82f6", boxShadow: "0 4px 16px rgba(59, 130, 246, 0.3)", zIndex: 50, animation: "fadeInUp 0.4s ease-out" }}>
+        <div style={{ position: "fixed", top: m ? 58 : 78, right: m ? 8 : 16, maxWidth: m ? 280 : 340, zIndex: 50, animation: "fadeInUp 0.4s ease-out" }}>
+          <Dismissible onDismiss={() => setDataCard(null)} style={{ background: "linear-gradient(135deg, #0c1d3a, #1e293b)", borderRadius: 12, padding: m ? "10px 12px" : "12px 14px", border: "1px solid #3b82f6", boxShadow: "0 4px 16px rgba(59, 130, 246, 0.3)", cursor: "grab" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
             <div style={{ fontSize: m ? 9 : 10, color: "#60a5fa", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase" }}>Real Yellowstone Data</div>
             <button className="ub" onClick={() => setDataCard(null)} style={{ background: "none", border: "none", color: "#64748b", fontSize: 14, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
@@ -5398,6 +5469,7 @@ export default function Simulation() {
           <div style={{ fontSize: m ? 11 : 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>{dataCard.title}</div>
           <div style={{ fontSize: m ? 10 : 11, color: "#fbbf24", marginBottom: 6 }}>Your game: <strong>{dataCard.yourStat(stats)}</strong></div>
           <div style={{ fontSize: m ? 10 : 11, color: "#cbd5e1", lineHeight: 1.5, background: "#0f172a", padding: "6px 8px", borderRadius: 6 }}>{dataCard.realStat}</div>
+          </Dismissible>
         </div>
       )}
     </div>
