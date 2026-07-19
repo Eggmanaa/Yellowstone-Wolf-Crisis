@@ -4391,7 +4391,6 @@ export default function Simulation() {
   const [audioMuted, setAudioMuted] = useState(false);
   const [narratorEnabled, setNarratorEnabled] = useState(true);
   const [narratorActive, setNarratorActive] = useState(false);
-  const [spokenSubtitle, setSpokenSubtitle] = useState(null);
   const [showWeb, setShowWeb] = useState(false);
   const [showLearn, setShowLearn] = useState(false);
   const [currentInsight, setCurrentInsight] = useState(null);
@@ -4616,8 +4615,7 @@ export default function Simulation() {
             const line = insight.spokenLines[audioIdx] || insight.spokenLines[0];
             narrator.speak(insight.id, line, audioFile);
             setNarratorActive(true);
-            setSpokenSubtitle(line);
-            setTimeout(() => { setNarratorActive(false); setSpokenSubtitle(null); }, 10000);
+            setTimeout(() => setNarratorActive(false), 10000);
           }
           break;
         }
@@ -4731,8 +4729,7 @@ export default function Simulation() {
     if (narratorEnabled && scenario.introAudio) {
       narrator.speak(`scenario_${scenario.id}`, scenario.introLine, scenario.introAudio);
       setNarratorActive(true);
-      setSpokenSubtitle(scenario.introLine);
-      setTimeout(() => { setNarratorActive(false); setSpokenSubtitle(null); }, 18000);
+      setTimeout(() => setNarratorActive(false), 18000);
     }
     const ctx = canvasRef.current?.getContext("2d");
     if (ctx) { ctx.clearRect(0, 0, eco.W, eco.H); renderEcosystem(ctx, eco); }
@@ -4837,11 +4834,8 @@ export default function Simulation() {
       setTimeout(() => {
         if (narratorEnabled) {
           narrator.speak('intro_' + delay, text, audio);
-          setSpokenSubtitle(text);
           setNarratorActive(true);
           setTimeout(() => setNarratorActive(false), 6000);
-          // Clear subtitle after line duration
-          setTimeout(() => setSpokenSubtitle(prev => prev === text ? null : prev), 9000);
         }
       }, delay);
     });
@@ -5155,26 +5149,6 @@ export default function Simulation() {
                   </Dismissible>
                 </div>
               ))}
-            </div>
-          )}
-
-          {/* Narrator subtitle bar */}
-          {spokenSubtitle && narratorEnabled && (
-            <div style={{
-              position: "absolute", bottom: alerts.length > 0 ? (m ? 110 : 80) : (m ? 62 : 16), left: "50%", transform: "translateX(-50%)",
-              maxWidth: m ? "92%" : "70%", zIndex: 5, pointerEvents: "auto",
-              animation: "subtitleFadeIn 0.4s ease-out",
-            }}>
-              <Dismissible onDismiss={() => setSpokenSubtitle(null)} style={{
-                background: "rgba(0,0,0,0.82)", borderRadius: m ? 8 : 10, padding: m ? "6px 26px 6px 12px" : "10px 34px 10px 20px",
-                border: "1px solid rgba(244,114,182,0.3)", backdropFilter: "blur(8px)", position: "relative", cursor: "grab",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: m ? 11 : 14 }}>🎙️</span>
-                  <span style={{ fontSize: m ? 10 : 12, color: "#f1f5f9", lineHeight: 1.4, fontStyle: "italic" }}>{spokenSubtitle}</span>
-                </div>
-                <button className="ub" onClick={() => setSpokenSubtitle(null)} title="Dismiss" style={{ position: "absolute", top: 3, right: 6, background: "transparent", border: "none", color: "#94a3b8", fontSize: 13, cursor: "pointer", padding: 2, lineHeight: 1 }}>✕</button>
-              </Dismissible>
             </div>
           )}
 
